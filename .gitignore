@@ -1,0 +1,50 @@
+# Runtime data and secrets
+auth.json
+log/
+checkin.log
+sheep-match-logs/
+invite-codes.txt
+balance-codes.txt
+
+# Build outputs
+dist/
+build/
+**/build/
+
+# Go
+go.work
+go.work.sum
+coverage.out
+*.test
+
+# Native/CMake/Ninja
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exp
+*.pdb
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local tooling and smoke artifacts
+.claude/
+.tmp-smoke/
+.tmp-smoke-outside/
+.tmp-smoke-script/
+/*.exe
