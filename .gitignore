@@ -1,21 +1,12 @@
 # Runtime data and secrets
-auth.json
-log/
-checkin.log
-sheep-match-logs/
-invite-codes.txt
-balance-codes.txt
+var/
 
 # Build outputs
 dist/
+artifacts/
+target/
 build/
 **/build/
-
-# Go
-go.work
-go.work.sum
-coverage.out
-*.test
 
 # Native/CMake/Ninja
 CMakeCache.txt
@@ -44,7 +35,6 @@ Thumbs.db
 
 # Local tooling and smoke artifacts
 .claude/
-.tmp-smoke/
-.tmp-smoke-outside/
-.tmp-smoke-script/
+.tmp-smoke-batch/
+tmp-portable-check/
 /*.exe

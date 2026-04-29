@@ -1,0 +1,318 @@
+#include "app/ffi.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <exception>
+#include <string>
+#include <vector>
+
+#include <cuda_runtime.h>
+
+#include "argon2-cuda/globalcontext.h"
+
+#include <argon2.h>
+
+#include "app/job.hpp"
+#include "app/solver.hpp"
+
+namespace {
+thread_local std::string g_last_error;
+
+void set_last_error(const std::exception& error) {
+    g_last_error = error.what();
+}
+
+void clear_last_error() {
+    g_last_error.clear();
+}
+
+app::Job benchmark_job() {
+    return app::Job(app::JobConfig{
+        .seed = "benchmark-seed-fixed",
+        .round_id = 1,
+        .visitor_id = "benchmark-visitor-fixed",
+        .challenge_id = 1,
+        .session_salt = "benchmark-session-salt-fixed",
+        .time_cost = 1,
+        .memory_cost_mb = 64,
+        .parallelism = 1,
+        .difficulty_bits = 255,
+    });
+}
+
+app::Job make_job(const mining_cuda_job& raw) {
+    const auto seed = std::string(
+        reinterpret_cast<const char*>(raw.seed_ptr),
+        reinterpret_cast<const char*>(raw.seed_ptr) + raw.seed_len);
+    const auto pass_prefix = std::string(
+        reinterpret_cast<const char*>(raw.pass_prefix_ptr),
+        reinterpret_cast<const char*>(raw.pass_prefix_ptr) + raw.pass_prefix_len);
+    return app::Job(app::JobConfig{
+        .seed = seed,
+        .pass_prefix_override = pass_prefix,
+        .time_cost = static_cast<int>(raw.time_cost),
+        .memory_cost_mb = static_cast<int>(raw.memory_cost_kib / 1024),
+        .parallelism = static_cast<int>(raw.parallelism),
+        .difficulty_bits = raw.difficulty_bits,
+    });
+}
+
+app::SolverConfig make_solver_config(const mining_cuda_solver_config& raw) {
+    return app::SolverConfig{
+        .batch_size = raw.batch_size,
+        .by_segment = raw.by_segment,
+        .precompute_refs = raw.precompute_refs,
+    };
+}
+
+void fill_mine_result(const app::SolveResult& mined,
+                      const std::atomic<std::int64_t>& attempts,
+                      mining_cuda_mine_result* result) {
+    result->found = mined.found;
+    result->nonce = mined.nonce;
+    result->attempts = attempts.load();
+    std::fill(std::begin(result->digest_hex), std::end(result->digest_hex), '\0');
+    if (!mined.digest.empty()) {
+        std::strncpy(result->digest_hex, mined.digest.c_str(), sizeof(result->digest_hex) - 1);
+    }
+}
+
+void fill_device_info(std::size_t device_index, mining_cuda_device_info* result) {
+    argon2::cuda::GlobalContext global;
+    const auto& devices = global.getAllDevices();
+    if (device_index >= devices.size()) {
+        throw std::runtime_error("CUDA device index out of range");
+    }
+
+    cudaDeviceProp prop{};
+    cudaGetDeviceProperties(&prop, static_cast<int>(device_index));
+
+    result->device_index = device_index;
+    std::fill(std::begin(result->device_id), std::end(result->device_id), '\0');
+    std::fill(std::begin(result->name), std::end(result->name), '\0');
+
+    const auto device_id = std::string("cuda:") + std::to_string(device_index);
+    std::strncpy(result->device_id, device_id.c_str(), sizeof(result->device_id) - 1);
+    std::strncpy(result->name, prop.name, sizeof(result->name) - 1);
+}
+} // namespace
+
+struct mining_cuda_session {
+    app::Job job;
+    app::Solver solver;
+    app::SolverSession session;
+    std::atomic_bool stop{false};
+    std::atomic<std::int64_t> attempts{0};
+
+    mining_cuda_session(std::size_t device_index,
+                     app::Job&& native_job,
+                     const app::SolverConfig& native_config,
+                     std::uint64_t start_nonce)
+        : job(std::move(native_job)),
+          solver(device_index),
+          session(solver.create_session(job, native_config, start_nonce)) {
+    }
+};
+
+bool mining_cuda_is_available() {
+    try {
+        clear_last_error();
+        app::Solver solver(0);
+        solver.default_config_for(benchmark_job());
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+bool mining_cuda_validate() {
+    try {
+        clear_last_error();
+        app::Solver solver(0);
+        solver.validate_against_reference(benchmark_job(), 1);
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+std::size_t mining_cuda_device_count() {
+    try {
+        clear_last_error();
+        argon2::cuda::GlobalContext global;
+        return global.getAllDevices().size();
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return 0;
+    }
+}
+
+bool mining_cuda_get_device_info(std::size_t device_index, mining_cuda_device_info* result) {
+    if (result == nullptr) {
+        g_last_error = "device info pointer is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        fill_device_info(device_index, result);
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+const char* mining_cuda_last_error_message() {
+    return g_last_error.c_str();
+}
+
+bool mining_cuda_default_solver_config(
+    std::size_t device_index,
+    const mining_cuda_job* job,
+    mining_cuda_solver_config* result) {
+    if (job == nullptr || result == nullptr) {
+        g_last_error = "default_solver_config parameter is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        app::Solver solver(device_index);
+        const auto native_job = make_job(*job);
+        const auto config = solver.default_config_for(native_job);
+        result->batch_size = config.batch_size;
+        result->by_segment = config.by_segment;
+        result->precompute_refs = config.precompute_refs;
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+bool mining_cuda_find_best_benchmark_config(std::size_t device_index, mining_cuda_benchmark_result* result) {
+    if (result == nullptr) {
+        g_last_error = "benchmark result pointer is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        app::Solver solver(device_index);
+        const auto best = solver.find_best_benchmark_config();
+        result->batch_size = best.config.batch_size;
+        result->by_segment = best.config.by_segment;
+        result->precompute_refs = best.config.precompute_refs;
+        result->attempts = best.attempts;
+        result->elapsed_ms = best.elapsed.count();
+        result->attempts_per_second = best.attempts_per_second;
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+bool mining_cuda_mine_batch(
+    std::size_t device_index,
+    const mining_cuda_job* job,
+    const mining_cuda_solver_config* config,
+    std::uint64_t start_nonce,
+    mining_cuda_mine_result* result) {
+    if (job == nullptr || config == nullptr || result == nullptr) {
+        g_last_error = "mine_batch parameter is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        app::Solver solver(device_index);
+        const auto native_job = make_job(*job);
+        const auto native_config = make_solver_config(*config);
+        std::atomic_bool stop{false};
+        std::atomic<std::int64_t> attempts{0};
+        const auto mined = solver.mine_batch(native_job, native_config, start_nonce, stop, attempts);
+        fill_mine_result(mined, attempts, result);
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+mining_cuda_session* mining_cuda_session_create(
+    std::size_t device_index,
+    const mining_cuda_job* job,
+    const mining_cuda_solver_config* config,
+    std::uint64_t start_nonce) {
+    if (job == nullptr || config == nullptr) {
+        g_last_error = "session_create parameter is null";
+        return nullptr;
+    }
+    try {
+        clear_last_error();
+        auto native_job = make_job(*job);
+        const auto native_config = make_solver_config(*config);
+        return new mining_cuda_session(device_index, std::move(native_job), native_config, start_nonce);
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return nullptr;
+    }
+}
+
+bool mining_cuda_session_mine_next_batch(
+    mining_cuda_session* session,
+    mining_cuda_mine_result* result) {
+    if (session == nullptr || result == nullptr) {
+        g_last_error = "session_mine_next_batch parameter is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        const auto mined = session->solver.mine_next_batch(session->job, session->session, session->stop, session->attempts);
+        fill_mine_result(mined, session->attempts, result);
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}
+
+void mining_cuda_session_destroy(mining_cuda_session* session) {
+    delete session;
+}
+
+bool mining_argon2id_hash_raw(
+    const std::uint8_t* password_ptr,
+    std::size_t password_len,
+    const std::uint8_t* salt_ptr,
+    std::size_t salt_len,
+    std::uint32_t time_cost,
+    std::uint32_t memory_cost_kib,
+    std::uint32_t parallelism,
+    std::uint8_t* digest_ptr,
+    std::size_t digest_len) {
+    if (password_ptr == nullptr || salt_ptr == nullptr || digest_ptr == nullptr || digest_len == 0) {
+        g_last_error = "argon2 parameter is null";
+        return false;
+    }
+    try {
+        clear_last_error();
+        const auto result = argon2id_hash_raw(time_cost,
+                                              memory_cost_kib,
+                                              parallelism,
+                                              password_ptr,
+                                              password_len,
+                                              salt_ptr,
+                                              salt_len,
+                                              digest_ptr,
+                                              digest_len);
+        if (result != ARGON2_OK) {
+            g_last_error = argon2_error_message(result);
+            return false;
+        }
+        return true;
+    } catch (const std::exception& error) {
+        set_last_error(error);
+        return false;
+    }
+}

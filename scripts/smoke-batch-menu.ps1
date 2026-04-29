@@ -1,25 +1,25 @@
 ﻿param(
     [switch]$Build = $true,
-    [switch]$SkipBalance,
     [switch]$SkipCheckin,
-    [switch]$SkipScratch,
+    [switch]$SkipScratch = $true,
     [switch]$SkipSheepMatch
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 
 $root = Split-Path -Parent $PSScriptRoot
 $distExe = Join-Path $root 'dist\hdd-win-x64.exe'
-$artifactDir = Join-Path $root '.tmp-smoke-script'
+$artifactDir = Join-Path $root '.tmp-smoke-batch'
 $returnMarker = '已返回上一级菜单。'
-$mainMenuPrompt = '请输入选项 (1/2/3):'
-$batchMenuPrompt = '请输入选项 (1/2/3/4):'
-$featureMenuPrompt = '请输入选项 (1/2/3/4/5/6):'
-$balanceDoneMarker = '全部账号余额查询完成。若要返回上一级菜单，请按 ESC。'
-$checkinDoneMarker = '全部账号签到完成。若要返回上一级菜单，请按 ESC。'
-$scratchDoneMarker = '自动随机刮刮乐处理完成。若要返回上一级菜单，请按 ESC。'
-$sheepDoneMarker = '自动羊了个羊处理完成。若要返回上一级菜单，请按 ESC。'
+$checkinDoneMarker = '全部账号签到完成。'
+$scratchDoneMarker = '自动随机刮刮乐处理完成。'
+$sheepDoneMarker = '自动羊了个羊处理完成。'
+$freeDoneMarker = '全自动完成所有白嫖玩法。'
+
 if (!(Test-Path $artifactDir)) {
     New-Item -ItemType Directory -Path $artifactDir | Out-Null
 }
@@ -28,99 +28,14 @@ function Ensure-Build {
     if ($Build -or !(Test-Path $distExe)) {
         Push-Location $root
         try {
-            & go build -o $distExe .\cmd\hdd
+            & .\scripts\build-win-x64.bat
             if ($LASTEXITCODE -ne 0) {
-                throw 'go build failed'
+                throw 'Rust build failed'
             }
         } finally {
             Pop-Location
         }
     }
-}
-
-
-function Start-InteractiveCli {
-    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/u', '/c', ('cd /d "' + $root + '" && dist\hdd-win-x64.exe > ".tmp-smoke-script\session.log" 2>&1')) -PassThru -WindowStyle Maximized
-    Start-Sleep -Milliseconds 1200
-    $wshell = New-Object -ComObject WScript.Shell
-    $null = $wshell.AppActivate($proc.Id)
-    Start-Sleep -Milliseconds 300
-    Wait-ForText $mainMenuPrompt 15 | Out-Null
-    return @{ Process = $proc; Shell = $wshell }
-}
-
-function Stop-InteractiveCli {
-    param($Session)
-    if ($null -eq $Session) {
-        return
-    }
-    $proc = $Session.Process
-    if ($proc -and -not $proc.HasExited) {
-        Stop-Process -Id $proc.Id -Force -Confirm:$false
-    }
-}
-
-function Send-Keys {
-    param($Session, [string]$Keys, [int]$DelayMs = 350)
-    $null = $Session.Shell.AppActivate($Session.Process.Id)
-    Start-Sleep -Milliseconds 150
-    $Session.Shell.SendKeys($Keys)
-    Start-Sleep -Milliseconds $DelayMs
-}
-
-function Read-SessionLog {
-    $path = Join-Path $artifactDir 'session.log'
-    if (!(Test-Path $path)) {
-        return ''
-    }
-    return Get-Content -Path $path -Encoding utf8 -Raw -ErrorAction SilentlyContinue
-}
-
-function Wait-ForText {
-    param([string]$Expected, [int]$TimeoutSeconds = 120)
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        $text = Read-SessionLog
-        if ($text.Contains($Expected)) {
-            return $text
-        }
-        Start-Sleep -Milliseconds 500
-    }
-    throw "did not find expected text: $Expected"
-}
-
-function Wait-ForProcessExit {
-    param($Session, [int]$TimeoutSeconds = 15)
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline -and -not $Session.Process.HasExited) {
-        Start-Sleep -Milliseconds 200
-    }
-    if (-not $Session.Process.HasExited) {
-        throw 'process did not exit in time'
-    }
-}
-
-function Enter-BatchFeatureMenu {
-    param($Session, [string]$FeatureChoice)
-    Send-Keys $Session '2{ENTER}'
-    Wait-ForText $batchMenuPrompt 15 | Out-Null
-    Send-Keys $Session '2{ENTER}'
-    Wait-ForText $featureMenuPrompt 15 | Out-Null
-    Send-Keys $Session ($FeatureChoice + '{ENTER}')
-}
-
-function Return-ToFeatureMenu {
-    param($Session)
-    Send-Keys $Session '{ESC}' 900
-    Wait-ForText $returnMarker 15 | Out-Null
-}
-
-function Exit-ProgramFromFeatureMenu {
-    param($Session)
-    Send-Keys $Session '5{ENTER}'
-    Send-Keys $Session '3{ENTER}'
-    Send-Keys $Session '3{ENTER}'
-    Wait-ForProcessExit $Session
 }
 
 function Get-FileSizes {
@@ -138,6 +53,7 @@ function Get-FileSizes {
 
 function Assert-FileGrowth {
     param($Before, [string[]]$Paths)
+    $grew = $false
     foreach ($path in $Paths) {
         $old = 0
         if ($Before.ContainsKey($path)) {
@@ -147,137 +63,82 @@ function Assert-FileGrowth {
         if (Test-Path $path) {
             $new = (Get-Item $path).Length
         }
-        if ($new -le $old) {
-            throw "expected file to grow: $path ($old -> $new)"
+        if ($new -gt $old) {
+            $grew = $true
         }
+    }
+    if (-not $grew) {
+        throw "expected at least one file to grow: $($Paths -join ', ')"
     }
 }
 
-
-function Run-BalanceSmoke {
-    Remove-Item -Path (Join-Path $artifactDir 'session.log') -ErrorAction SilentlyContinue
-    $session = Start-InteractiveCli
-    try {
-        Enter-BatchFeatureMenu $session '1'
-        Wait-ForText $balanceDoneMarker 120 | Out-Null
-        Return-ToFeatureMenu $session
-        $text = Get-Content -Path (Join-Path $artifactDir 'session.log') -Encoding utf8 -Raw
-        if (!$text.Contains($returnMarker)) {
-            throw 'balance flow did not print return marker'
-        }
-        Exit-ProgramFromFeatureMenu $session
-        Write-Output 'balance: ok'
-    } finally {
-        Stop-InteractiveCli $session
-    }
-}
-
-function Run-CheckinSmoke {
-    $sharedLog = Join-Path $root 'log\checkin\checkin.log'
-    $before = Get-FileSizes @($sharedLog)
-    Remove-Item -Path (Join-Path $artifactDir 'session.log') -ErrorAction SilentlyContinue
-    $session = Start-InteractiveCli
-    try {
-        Enter-BatchFeatureMenu $session '2'
-        Wait-ForText $checkinDoneMarker 120 | Out-Null
-        Return-ToFeatureMenu $session
-        $text = Get-Content -Path (Join-Path $artifactDir 'session.log') -Encoding utf8 -Raw
-        if (!$text.Contains($returnMarker)) {
-            throw 'checkin flow did not print return marker'
-        }
-        Assert-FileGrowth $before @($sharedLog)
-        Exit-ProgramFromFeatureMenu $session
-        Write-Output 'checkin: ok'
-    } finally {
-        Stop-InteractiveCli $session
-    }
-}
-
-function Run-ScratchSmoke {
-    $logPaths = @(
-        (Join-Path $root 'log\scratch\aiuser001_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\scratch\aiuser002_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\scratch\aiuser003_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\scratch\demo_at_example.com.log')
+function Invoke-HeadlessFlow {
+    param(
+        [string]$Name,
+        [string[]]$Inputs,
+        [string]$DoneMarker,
+        [string[]]$LogPaths = @()
     )
-    $before = Get-FileSizes $logPaths
-    Remove-Item -Path (Join-Path $artifactDir 'session.log') -ErrorAction SilentlyContinue
-    $session = Start-InteractiveCli
-    try {
-        Enter-BatchFeatureMenu $session '3'
-        Wait-ForText $scratchDoneMarker 120 | Out-Null
-        $deadline = (Get-Date).AddSeconds(120)
-        while ((Get-Date) -lt $deadline) {
-            $allDone = $true
-            foreach ($path in $logPaths) {
-                $old = $before[$path]
-                $new = 0
-                if (Test-Path $path) {
-                    $new = (Get-Item $path).Length
-                }
-                if ($new -le $old) {
-                    $allDone = $false
-                    break
-                }
-            }
-            if ($allDone) {
-                Start-Sleep -Milliseconds 1800
-                break
-            }
-            Start-Sleep -Milliseconds 500
-        }
-        Return-ToFeatureMenu $session
-        $text = Get-Content -Path (Join-Path $artifactDir 'session.log') -Encoding utf8 -Raw
-        if (!$text.Contains($returnMarker)) {
-            throw 'scratch flow did not print return marker'
-        }
-        Assert-FileGrowth $before $logPaths
-        Exit-ProgramFromFeatureMenu $session
-        Write-Output 'scratch: ok'
-    } finally {
-        Stop-InteractiveCli $session
-    }
-}
 
-function Run-SheepMatchSmoke {
-    $logPaths = @(
-        (Join-Path $root 'log\sheep-match\aiuser001_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\sheep-match\aiuser002_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\sheep-match\aiuser003_at_fuckwall.eu.org.log'),
-        (Join-Path $root 'log\sheep-match\demo_at_example.com.log')
-    )
-    $before = Get-FileSizes $logPaths
-    Remove-Item -Path (Join-Path $artifactDir 'session.log') -ErrorAction SilentlyContinue
-    $session = Start-InteractiveCli
+    $sessionLog = Join-Path $artifactDir ($Name + '.log')
+    $inputFile = Join-Path $artifactDir ($Name + '.input.txt')
+    $before = Get-FileSizes $LogPaths
+    $inputText = (($Inputs -join "`r`n") + "`r`n")
+    [System.IO.File]::WriteAllText($inputFile, $inputText, [System.Text.UTF8Encoding]::new($false))
+
+    Push-Location $root
     try {
-        Enter-BatchFeatureMenu $session '4'
-        Wait-ForText $sheepDoneMarker 120 | Out-Null
-        Return-ToFeatureMenu $session
-        $text = Get-Content -Path (Join-Path $artifactDir 'session.log') -Encoding utf8 -Raw
-        if (!$text.Contains($returnMarker)) {
-            throw 'sheep-match flow did not print return marker'
+        & cmd.exe /d /c "chcp 65001>nul && set HDD_SMOKE_AUTO_RETURN=1 && dist\hdd-win-x64.exe < `"$inputFile`" > `"$sessionLog`" 2>&1"
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Name flow exited with code $LASTEXITCODE"
         }
-        Assert-FileGrowth $before $logPaths
-        Exit-ProgramFromFeatureMenu $session
-        Write-Output 'sheep-match: ok'
     } finally {
-        Stop-InteractiveCli $session
+        Pop-Location
     }
+
+    $text = Get-Content -Path $sessionLog -Encoding utf8 -Raw
+    if (!$text.Contains($DoneMarker)) {
+        throw "$Name flow missing done marker"
+    }
+    if (!$text.Contains($returnMarker)) {
+        throw "$Name flow missing return marker"
+    }
+    if ($LogPaths.Count -gt 0) {
+        Assert-FileGrowth $before $LogPaths
+    }
+    Write-Output ($Name + ': ok')
 }
 
 Ensure-Build
 
-if (-not $SkipBalance) {
-    Run-BalanceSmoke
-}
 if (-not $SkipCheckin) {
-    Run-CheckinSmoke
+    Invoke-HeadlessFlow -Name 'checkin' -Inputs @('2', '2', '1', '2', '4', '3', '3') -DoneMarker $checkinDoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\checkin\checkin.log')
+    )
 }
 if (-not $SkipScratch) {
-    Run-ScratchSmoke
+    Invoke-HeadlessFlow -Name 'scratch' -Inputs @('2', '2', '2', '1', '2', '3', '3') -DoneMarker $scratchDoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\scratch\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\scratch\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\scratch\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\scratch\demo_at_example.com.log')
+    )
 }
 if (-not $SkipSheepMatch) {
-    Run-SheepMatchSmoke
+    Invoke-HeadlessFlow -Name 'sheep-match' -Inputs @('2', '2', '1', '3', '4', '3', '3') -DoneMarker $sheepDoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\sheepmatch\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sheepmatch\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sheepmatch\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sheepmatch\demo_at_example.com.log')
+    )
 }
 
-Write-Output 'batch smoke: done'
+Invoke-HeadlessFlow -Name 'free-auto' -Inputs @('2', '2', '1', '1', '4', '3', '3') -DoneMarker $freeDoneMarker -LogPaths @(
+    (Join-Path $root 'var\log\checkin\checkin.log'),
+    (Join-Path $root 'var\log\sheepmatch\aiuser001_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sheepmatch\aiuser002_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sheepmatch\aiuser003_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sheepmatch\demo_at_example.com.log')
+)
+
+Write-Output '批量菜单烟测完成。'

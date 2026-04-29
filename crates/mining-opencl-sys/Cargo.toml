@@ -1,0 +1,13 @@
+[package]
+name = "mining-opencl-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+cmake = "0.1"
+
+[lints.rust]
+unsafe_code = "allow"
+unused_crate_dependencies = "allow"

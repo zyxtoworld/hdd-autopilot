@@ -1,19 +1,65 @@
 @echo off
 setlocal
+chcp 65001 >nul
 
 set "ROOT=%~dp0.."
 set "DIST=%ROOT%\dist"
+set "STATUS_FILE=%DIST%\hdd-win-x64.status"
+set "BUILD_LOG=%DIST%\hdd-win-x64.build.log"
+set "RELEASE_ORCHESTRATED=0"
+if /I "%~1"=="--orchestrated" set "RELEASE_ORCHESTRATED=1"
+
+if /I "%~1"=="--check" goto :check
+if /I "%~2"=="--check" goto :check
+
+goto :build
+
+:check
+where cargo >nul 2>&1
+if errorlevel 1 (
+  echo Windows x64 打包环境缺失：请先安装 Rust 工具链并确保 cargo 在 PATH 中。>&2
+  exit /b 2
+)
+exit /b 0
+
+:build
+call "%~f0" --check
+if errorlevel 1 (
+  if "%RELEASE_ORCHESTRATED%"=="1" exit /b 2
+  call :pause_on_missing_env
+  exit /b 2
+)
+
 if not exist "%DIST%" mkdir "%DIST%"
 
 pushd "%ROOT%"
 if errorlevel 1 exit /b 1
 
-echo Building hdd-win-x64.exe...
-go build -o "%DIST%\hdd-win-x64.exe" .\cmd\hdd
-set "BUILD_EXIT=%errorlevel%"
+echo 正在构建 hdd-win-x64.exe...
+cargo build --release --package hdd > "%BUILD_LOG%" 2>&1
+set "BUILD_EXIT=%ERRORLEVEL%"
+type "%BUILD_LOG%"
+if not "%BUILD_EXIT%"=="0" exit /b %BUILD_EXIT%
+copy /Y ".\target\release\hdd.exe" "%DIST%\hdd-win-x64.exe" >nul
+if errorlevel 1 goto :fail
+findstr /I /C:"native backend disabled" "%BUILD_LOG%" >nul
+if errorlevel 1 (
+  > "%STATUS_FILE%" echo built
+) else (
+  > "%STATUS_FILE%" echo built_degraded
+)
 
 popd
-if errorlevel 1 exit /b %BUILD_EXIT%
 
-echo Done: %DIST%\hdd-win-x64.exe
+echo 构建完成：%DIST%\hdd-win-x64.exe
+exit /b 0
+
+:fail
+set "BUILD_EXIT=%ERRORLEVEL%"
+popd
 exit /b %BUILD_EXIT%
+
+:pause_on_missing_env
+echo.
+pause
+exit /b 2

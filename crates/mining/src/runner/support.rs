@@ -1,0 +1,372 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use chrono::TimeZone;
+
+use crate::backend::{BackendDescriptor, BackendKind, BenchmarkResult, ComputeJob};
+use crate::{ChallengeResponse, MiningError};
+
+#[derive(Debug, Clone)]
+pub(super) struct SelectedBackend {
+    pub(super) kind: BackendKind,
+    pub(super) label: &'static str,
+    pub(super) device_id: String,
+    pub(super) device_index: Option<usize>,
+    pub(super) profile: BenchmarkResult,
+}
+
+impl SelectedBackend {
+    pub(super) fn new(descriptor: &BackendDescriptor, profile: BenchmarkResult) -> Self {
+        Self {
+            kind: descriptor.kind,
+            label: match descriptor.kind {
+                BackendKind::Cpu => "CPU",
+                BackendKind::Cuda => "CUDA",
+                BackendKind::Metal => "Metal",
+                BackendKind::Opencl => "OpenCL",
+            },
+            device_id: descriptor.device_id.clone(),
+            device_index: descriptor.device_index,
+            profile,
+        }
+    }
+
+    pub(super) fn selection_detail(&self) -> String {
+        match self.kind {
+            BackendKind::Cpu => format!(
+                "线程数 {}，并发数 {}",
+                self.profile.workers.max(1),
+                self.profile.concurrency.max(1)
+            ),
+            BackendKind::Cuda | BackendKind::Metal | BackendKind::Opencl => format!(
+                "批大小 {}，按分段 {}，预计算参考值 {}",
+                self.profile.workers.max(1),
+                localized_bool(self.profile.by_segment),
+                localized_bool(self.profile.precompute_refs)
+            ),
+        }
+    }
+
+    pub(super) fn speed_label(&self) -> String {
+        format!("{:.2}", self.profile.attempts_per_s)
+    }
+}
+
+pub(super) fn select_best_backend_by_kind(
+    candidates: &[SelectedBackend],
+    kind: BackendKind,
+) -> Option<SelectedBackend> {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.kind == kind)
+        .cloned()
+        .max_by(|left, right| {
+            left.profile
+                .attempts_per_s
+                .total_cmp(&right.profile.attempts_per_s)
+        })
+}
+
+pub(super) fn select_backend_workers(candidates: &[SelectedBackend]) -> Vec<SelectedBackend> {
+    let mut selected = Vec::new();
+    if let Some(cpu) = select_best_backend_by_kind(candidates, BackendKind::Cpu) {
+        selected.push(cpu);
+    }
+    if let Some(gpu) = candidates
+        .iter()
+        .filter(|candidate| candidate.kind != BackendKind::Cpu)
+        .cloned()
+        .max_by(|left, right| {
+            left.profile
+                .attempts_per_s
+                .total_cmp(&right.profile.attempts_per_s)
+        })
+    {
+        selected.push(gpu);
+    }
+    selected
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct RoundStatus {
+    pub(super) round_closed: bool,
+    pub(super) daily_limit: bool,
+    pub(super) inventory_depleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct BenchmarkKey {
+    pub(super) memory_cost_kib: u32,
+    pub(super) time_cost: u32,
+    pub(super) parallelism: u32,
+}
+
+impl From<&ComputeJob> for BenchmarkKey {
+    fn from(job: &ComputeJob) -> Self {
+        Self {
+            memory_cost_kib: job.memory_cost_kib,
+            time_cost: job.time_cost,
+            parallelism: job.parallelism,
+        }
+    }
+}
+
+impl From<&ChallengeResponse> for ComputeJob {
+    fn from(challenge: &ChallengeResponse) -> Self {
+        let parallelism = challenge.parallelism as u8;
+        Self {
+            seed_bytes: challenge.seed.as_bytes().to_vec(),
+            pass_prefix: format!(
+                "{}:{}:{}:{}:{}:",
+                challenge.seed,
+                challenge.round_id,
+                challenge.visitor_id,
+                challenge.challenge_id,
+                challenge.session_salt
+            )
+            .into_bytes(),
+            time_cost: challenge.time_cost as u32,
+            memory_cost_kib: (challenge.memory_cost_mb as u32).wrapping_mul(1024),
+            parallelism: if parallelism == 0 {
+                1
+            } else {
+                parallelism as u32
+            },
+            difficulty_bits: challenge.difficulty_bits,
+        }
+    }
+}
+
+pub(super) fn current_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+pub(super) fn localized_bool(value: bool) -> &'static str {
+    if value { "是" } else { "否" }
+}
+
+pub(super) fn append_reward_code(
+    path: &Path,
+    requested_label: &str,
+    actual_label: &str,
+    code: &str,
+) -> Result<(), MiningError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(
+        file,
+        "[{}] 已保存{}（实际发放{}）：{}",
+        chrono::Utc
+            .timestamp_millis_opt(current_unix_ms())
+            .single()
+            .unwrap()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
+            .format("%Y-%m-%d %H:%M:%S"),
+        requested_label,
+        actual_label,
+        code
+    )?;
+    Ok(())
+}
+
+pub(super) fn check_cancel(cancel: &AtomicBool) -> Result<(), MiningError> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(crate::error::interrupted_error());
+    }
+    Ok(())
+}
+
+pub(super) fn sleep_with_cancel(cancel: &AtomicBool, wait: Duration) -> Result<(), MiningError> {
+    if wait <= Duration::ZERO {
+        return Ok(());
+    }
+    let started = Instant::now();
+    loop {
+        check_cancel(cancel)?;
+        let elapsed = started.elapsed();
+        if elapsed >= wait {
+            return Ok(());
+        }
+        let remaining = wait - elapsed;
+        thread::sleep(remaining.min(Duration::from_millis(100)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend(
+        kind: BackendKind,
+        device_id: &str,
+        attempts_per_s: f64,
+        workers: usize,
+    ) -> SelectedBackend {
+        SelectedBackend {
+            kind,
+            label: match kind {
+                BackendKind::Cpu => "CPU",
+                BackendKind::Cuda => "CUDA",
+                BackendKind::Metal => "Metal",
+                BackendKind::Opencl => "OpenCL",
+            },
+            device_id: device_id.to_string(),
+            device_index: match kind {
+                BackendKind::Cpu => None,
+                BackendKind::Cuda | BackendKind::Metal | BackendKind::Opencl => Some(0),
+            },
+            profile: BenchmarkResult {
+                workers,
+                concurrency: workers,
+                by_segment: false,
+                precompute_refs: false,
+                attempts: 0,
+                elapsed: Duration::from_secs(1),
+                attempts_per_s,
+            },
+        }
+    }
+
+    #[test]
+    fn select_backend_workers_picks_best_cpu_and_gpu() {
+        let cpu_slow = backend(BackendKind::Cpu, "cpu:slow", 100.0, 4);
+        let cpu_fast = backend(BackendKind::Cpu, "cpu:fast", 180.0, 8);
+        let cuda = backend(BackendKind::Cuda, "cuda:0", 250.0, 4096);
+        let metal = backend(BackendKind::Metal, "metal:0", 220.0, 2048);
+
+        let selected = select_backend_workers(&[cpu_slow, cpu_fast, cuda, metal]);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].kind, BackendKind::Cpu);
+        assert_eq!(selected[0].device_id, "cpu:fast");
+        assert_eq!(selected[1].kind, BackendKind::Cuda);
+        assert_eq!(selected[1].device_id, "cuda:0");
+    }
+
+    #[test]
+    fn benchmark_key_ignores_difficulty_bits() {
+        let left = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+        let right = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 24,
+        };
+
+        assert_eq!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+    }
+
+    #[test]
+    fn benchmark_key_changes_with_memory_cost() {
+        let left = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+        let right = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 128 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+
+        assert_ne!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+    }
+
+    #[test]
+    fn benchmark_key_changes_with_time_cost() {
+        let left = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+        let right = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 2,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+
+        assert_ne!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+    }
+
+    #[test]
+    fn benchmark_key_changes_with_parallelism() {
+        let left = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+        let right = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"prefix-a:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 2,
+            difficulty_bits: 12,
+        };
+
+        assert_ne!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+    }
+
+    #[test]
+    fn compute_job_from_challenge_matches_go_value_mapping() {
+        let challenge = ChallengeResponse {
+            ok: true,
+            challenge_id: 7,
+            round_id: 8,
+            difficulty_bits: 9,
+            memory_cost_mb: -2,
+            parallelism: -1,
+            seed: "seed".to_string(),
+            session_salt: "salt".to_string(),
+            time_cost: -3,
+            visitor_id: "visitor".to_string(),
+            message: String::new(),
+            result: String::new(),
+        };
+
+        let job = ComputeJob::from(&challenge);
+
+        assert_eq!(job.seed_bytes, b"seed");
+        assert_eq!(job.pass_prefix, b"seed:8:visitor:7:salt:");
+        assert_eq!(job.time_cost, (-3i32) as u32);
+        assert_eq!(job.memory_cost_kib, ((-2i32) as u32).wrapping_mul(1024));
+        assert_eq!(job.parallelism, (-1i32) as u8 as u32);
+        assert_eq!(job.difficulty_bits, 9);
+    }
+}

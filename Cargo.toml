@@ -1,0 +1,53 @@
+[package]
+name = "hdd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mining = { path = "crates/mining" }
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+crossterm.workspace = true
+rand.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[workspace]
+members = [
+  "crates/mining",
+  "crates/mining-cuda-sys",
+  "crates/mining-metal-sys",
+  "crates/mining-opencl-sys",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+tempfile = "3.20"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "cookies", "json", "rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+crossterm = "0.29"
+rand = "0.9"
+argon2 = "0.5"
+unicode-width = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_crate_dependencies = "warn"

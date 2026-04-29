@@ -1,0 +1,18 @@
+[package]
+name = "mining"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mining-cuda-sys = { path = "../mining-cuda-sys" }
+mining-metal-sys = { path = "../mining-metal-sys" }
+mining-opencl-sys = { path = "../mining-opencl-sys" }
+argon2.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
