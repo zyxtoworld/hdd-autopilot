@@ -87,8 +87,12 @@ cargo run --release --bin hdd
 1. 全自动完成所有白嫖玩法
 2. 自动签到
 3. 自动羊了个羊
-4. 返回上一级菜单
-5. 退出脚本
+4. 自动谜题2048
+5. 自动记忆翻牌
+6. 自动华容道
+7. 自动数独
+8. 返回上一级菜单
+9. 退出脚本
 
 赌狗玩法菜单：
 
@@ -121,14 +125,76 @@ cargo run --release --bin hdd
 
 - `var/log/sheepmatch/<sanitized-email>.log`
 
+### 自动谜题2048
+
+自动谜题2048按账号并发执行。每个账号会读取谜题配置和历史记录，先续玩未结束残局，再按难度顺序处理当天剩余次数：
+
+1. 入门 `mini`：3x3，目标 512
+2. 经典 `classic`：4x4，目标 2048
+3. 挑战 `jumbo`：5x5，目标 4096
+
+每一步都会用 `/puzzle2048-api/move` 返回的最新棋盘重新求下一步，不在本地推测服务端生成的新数字。求解器使用合法移动枚举、expectimax 搜索和空格数、可合并数、蛇形单调性、平滑度、最大块角落等启发式评分；接口返回成功后立即进入下一步。
+
+日志写入：
+
+- `var/log/puzzle_2048/<sanitized-email>.log`
+
+### 自动记忆翻牌
+
+自动记忆翻牌按账号并发执行。每个账号会读取 `/memory-api/config` 和历史记录，优先续玩 `pending` 残局，再按难度顺序处理当天剩余次数：
+
+1. 简单 `easy`
+2. 普通 `normal`
+3. 困难 `hard`
+4. 地狱 `hell`
+
+求解器会记录已经翻开的卡牌和符号，发现已知对子时优先消除；没有已知对子时继续探测未知格，并避开刚刚失败的组合。每次 `/memory-api/flip` 返回成功后立即根据最新状态继续下一步。
+
+日志写入：
+
+- `var/log/memory/<sanitized-email>.log`
+
+### 自动华容道
+
+自动华容道按账号并发执行。每个账号会读取 `/puzzle15-api/config` 和历史记录，优先续玩 `pending` 残局，再按难度顺序处理当天剩余次数：
+
+1. 入门 `easy`：3x3
+2. 经典 `classic`：4x4
+3. 挑战 `hard`：5x5
+
+求解器拿到开局或残局棋盘后一次性计算完整移动序列，再按顺序调用 `/puzzle15-api/move`。接口里的方向按“数字块向空格移动”的语义处理；每步只等待接口返回成功，不再做额外间隔。
+
+日志写入：
+
+- `var/log/puzzle_15/<sanitized-email>.log`
+
+### 自动数独
+
+自动数独按账号并发执行。每个账号会读取 `/sudoku-api/config` 和历史记录，优先续玩 `pending` 残局，再按难度顺序处理当天剩余次数：
+
+1. 入门 `easy`
+2. 普通 `normal`
+3. 困难 `hard`
+4. 专家 `expert`
+
+求解器根据 `givens` 计算完整答案，对空格和可编辑错误格直接提交正确值；如果残局里存在冲突，流程会按接口返回状态继续修正，必要时使用 `value: null` 清除后重填。每次 `/sudoku-api/fill` 返回成功后立即提交下一格。
+
+日志写入：
+
+- `var/log/sudoku/<sanitized-email>.log`
+
 ### 全自动完成所有白嫖玩法
 
 全自动白嫖玩法当前包含：
 
 1. 自动签到
 2. 自动羊了个羊
+3. 自动谜题2048
+4. 自动记忆翻牌
+5. 自动华容道
+6. 自动数独
 
-不同账号之间并发执行；同一个账号内部先签到，再羊了个羊。账号状态会在全部线程完成后合并并保存一次。
+不同账号之间并发执行；同一个账号内部的不同白嫖玩法也会并发执行。账号状态会在全部线程完成后合并并保存一次。
 
 ### 自动随机刮刮乐
 
@@ -150,7 +216,7 @@ cargo run --release --bin hdd
 
 ## 长任务日志视图
 
-挖矿、自动签到、自动羊了个羊、全自动白嫖玩法和自动随机刮刮乐都使用应用内日志视图。
+挖矿、自动签到、自动羊了个羊、自动谜题2048、自动记忆翻牌、自动华容道、自动数独、全自动白嫖玩法和自动随机刮刮乐都使用应用内日志视图。
 
 交互模式行为：
 
@@ -189,8 +255,12 @@ hdd/
 │  │  ├─ mod.rs                # 共享 DTO 导出
 │  │  ├─ auth.rs               # 登录态与账号缓存 DTO
 │  │  ├─ checkin.rs            # 签到 DTO
+│  │  ├─ memory.rs             # 记忆翻牌 DTO
+│  │  ├─ puzzle_15.rs          # 华容道 DTO
+│  │  ├─ puzzle_2048.rs        # 谜题2048 DTO
 │  │  ├─ scratch.rs            # 刮刮乐 DTO
-│  │  └─ sheepmatch.rs         # 羊了个羊 DTO
+│  │  ├─ sheepmatch.rs         # 羊了个羊 DTO
+│  │  └─ sudoku.rs             # 数独 DTO
 │  ├─ workflows/
 │  │  ├─ mod.rs                # 业务流程模块入口
 │  │  ├─ free_play.rs          # 白嫖玩法组合调度
@@ -204,13 +274,38 @@ hdd/
 │  │  │  ├─ auth.rs            # 登录态校验与重登
 │  │  │  ├─ round.rs           # 刮刮乐轮次执行、补开奖、历史同步
 │  │  │  └─ log.rs             # 刮刮乐日志
-│  │  └─ sheepmatch/
-│  │     ├─ mod.rs             # 羊了个羊批量入口
+│  │  ├─ memory/
+│  │  │  ├─ mod.rs             # 记忆翻牌批量入口
+│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ round.rs           # 残局续玩、新局执行和翻牌策略
+│  │  │  ├─ types.rs           # 记忆翻牌流程内部类型
+│  │  │  └─ log.rs             # 记忆翻牌日志
+│  │  ├─ puzzle_15/
+│  │  │  ├─ mod.rs             # 华容道批量入口
+│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ round.rs           # 残局续玩、新局执行和移动提交
+│  │  │  ├─ types.rs           # 华容道流程内部类型
+│  │  │  └─ log.rs             # 华容道日志
+│  │  ├─ puzzle_2048/
+│  │  │  ├─ mod.rs             # 谜题2048批量入口
+│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ round.rs           # 残局续玩、新局执行和棋盘求解
+│  │  │  ├─ types.rs           # 谜题2048流程内部类型
+│  │  │  ├─ log.rs             # 谜题2048日志
+│  │  │  └─ tests.rs           # 谜题2048内部测试
+│  │  ├─ sheepmatch/
+│  │  │  ├─ mod.rs             # 羊了个羊批量入口
+│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ round.rs           # 对局执行、点击重试、轮次汇总
+│  │  │  ├─ snapshot.rs        # 棋盘快照与固定点击队列
+│  │  │  ├─ log.rs             # 羊了个羊日志
+│  │  │  └─ tests.rs           # 羊了个羊内部测试
+│  │  └─ sudoku/
+│  │     ├─ mod.rs             # 数独批量入口
 │  │     ├─ auth.rs            # 登录态校验与重登
-│  │     ├─ round.rs           # 对局执行、点击重试、轮次汇总
-│  │     ├─ snapshot.rs        # 棋盘快照与固定点击队列
-│  │     ├─ log.rs             # 羊了个羊日志
-│  │     └─ tests.rs           # 羊了个羊内部测试
+│  │     ├─ round.rs           # 残局续玩、新局执行和填数提交
+│  │     ├─ types.rs           # 数独流程内部类型
+│  │     └─ log.rs             # 数独日志
 │  ├─ storage/
 │  │  ├─ mod.rs                # 账号缓存导出
 │  │  ├─ cache.rs              # 账号缓存读写、旧格式兼容
@@ -220,7 +315,11 @@ hdd/
 │  │  └─ paths.rs              # var/、dist/、legacy 数据迁移与查找
 │  ├─ solver/
 │  │  ├─ mod.rs                # 独立搜索模块入口
-│  │  └─ search.rs             # 深搜与道具边界规划
+│  │  ├─ search.rs             # 羊了个羊深搜与道具边界规划
+│  │  ├─ memory/               # 记忆翻牌已知对子和探测策略
+│  │  ├─ puzzle_15/            # 华容道可解性校验和加权 A* 搜索
+│  │  ├─ puzzle_2048/          # 谜题2048棋盘模拟和 expectimax 策略
+│  │  └─ sudoku/               # 数独回溯求解和填数计划
 │  └─ ui/
 │     ├─ mod.rs                # 控制台准备、固定顶部、日志视图、ESC 中断
 │     ├─ render.rs             # 单行渲染、宽字符裁剪、完成提示
@@ -270,10 +369,10 @@ hdd/
 - `cli`：命令行菜单、选项输入、账号添加、业务流程接线。
 - `api`：HTTP client、cookie、接口边界、接口错误文案。
 - `model`：共享 DTO / serde 结构，兼容接口里的字符串数字和可选字段。
-- `workflows`：签到、刮刮乐、羊了个羊、白嫖组合流程。
+- `workflows`：签到、刮刮乐、羊了个羊、谜题2048、记忆翻牌、华容道、数独、白嫖组合流程。
 - `storage`：账号缓存读写、旧格式兼容、登录态归一化。
 - `runtime`：路径解析、打包产物查找、legacy 数据迁移。
-- `solver`：独立羊了个羊搜索辅助模块；当前自动玩法主流程不调用它。
+- `solver`：羊了个羊搜索辅助模块，以及谜题2048、记忆翻牌、华容道、数独的自动求解器。
 - `ui`：终端准备、固定顶部、应用内滚动日志视图、ESC 中断、单行渲染。
 - `crates/mining`：挖矿协议、CPU/GPU 后端选择、自动调优、心跳、提交、奖励保存。
 - `*-sys` crates：按目标平台尝试构建原生 GPU 后端，失败时只禁用该后端，不中断整个 Rust build。
@@ -288,6 +387,10 @@ hdd/
 - `var/log/checkin/checkin.log`
 - `var/log/scratch/<sanitized-email>.log`
 - `var/log/sheepmatch/<sanitized-email>.log`
+- `var/log/puzzle_2048/<sanitized-email>.log`
+- `var/log/memory/<sanitized-email>.log`
+- `var/log/puzzle_15/<sanitized-email>.log`
+- `var/log/sudoku/<sanitized-email>.log`
 
 兼容性约定：
 
@@ -413,10 +516,14 @@ cargo run --release --bin benchcuda
 - runtime root、`var/`、`dist/`、legacy 数据迁移。
 - prompt / render / UI 滚动计算。
 - 自动签到结果和日志语义。
-- 刮刮乐、签到、羊了个羊 DTO 兼容解析。
-- 全自动白嫖玩法的账号内顺序、账号间并发和保存行为。
+- 刮刮乐、签到、羊了个羊、谜题2048、记忆翻牌、华容道、数独 DTO 兼容解析。
+- 全自动白嫖玩法的账号间并发、账号内多玩法并发和保存行为。
 - 羊了个羊点击队列、认证重试、HTTP 重试、槽位满处理、剩余次数和快照更新。
 - 挖矿后端选择、奖励类型解析和基础行为。
+- 谜题2048移动合并规则、合法移动、直接胜利步和 3x3 / 4x4 / 5x5 求解器入口。
+- 记忆翻牌已知对子、失败组合规避和残局识别。
+- 华容道可解性校验、方向语义和 3x3 / 4x4 / 5x5 路径搜索。
+- 数独回溯求解、错误可编辑格覆盖、冲突残局修复和填数计划。
 
 ## 批量菜单烟测
 
@@ -430,12 +537,13 @@ powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 
 - 自动签到
 - 自动羊了个羊
+- 自动谜题2048
 - 全自动完成所有白嫖玩法
 
-自动随机刮刮乐默认跳过；需要完整 smoke 时运行：
+自动随机刮刮乐、自动记忆翻牌、自动华容道、自动数独的独立入口默认跳过，避免额外消耗次数；需要完整 smoke 时运行：
 
 ```powershell
-powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false
+powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false -SkipMemory:$false -SkipPuzzle15:$false -SkipSudoku:$false
 ```
 
 smoke 会设置 `HDD_SMOKE_AUTO_RETURN=1`，并检查：

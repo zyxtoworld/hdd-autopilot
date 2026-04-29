@@ -1,4 +1,8 @@
 pub mod checkin;
 pub mod free_play;
+pub mod memory;
+pub mod puzzle_15;
+pub mod puzzle_2048;
 pub mod scratch;
 pub mod sheepmatch;
+pub mod sudoku;

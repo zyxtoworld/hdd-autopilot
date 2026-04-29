@@ -3,9 +3,15 @@ use std::time::Duration;
 use crate::model::{
     AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
     CheckinTodayResponse, ConfigResponse, HistoryResponse, LoginRequest, LoginResponse,
+    MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
+    MemoryStartRequest, MemoryStartResponse, Puzzle15ConfigResponse, Puzzle15HistoryResponse,
+    Puzzle15MoveRequest, Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse,
+    Puzzle2048AbandonRequest, Puzzle2048ConfigResponse, Puzzle2048HistoryResponse,
+    Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
     ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
     ScratchRevealResponse, SessionCookie, StartRequest, StartResponse, StepRequest, StepResponse,
-    TileMeResponse,
+    SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse,
+    SudokuStartRequest, SudokuStartResponse, TileMeResponse,
 };
 use crate::storage::{build_authorization, normalize_base_url};
 use reqwest::blocking::Client;
@@ -20,9 +26,13 @@ use super::cookies::{cookie_header_value, merge_session_cookies, normalize_sessi
 use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
-    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, LOGIN_PATH, SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH,
-    SCRATCH_REVEAL_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH,
-    TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
+    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, LOGIN_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH,
+    MEMORY_HISTORY_PATH, MEMORY_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH,
+    PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
+    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH,
+    SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH,
+    SUDOKU_HISTORY_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH,
+    TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
 };
 
 impl ApiClient {
@@ -269,6 +279,265 @@ impl ApiClient {
             auth_token,
             &(self.base_url.clone() + "/tile"),
             Some(&AbandonRequest { session_id }),
+        )
+    }
+
+    pub fn get_puzzle_2048_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<Puzzle2048ConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            PUZZLE_2048_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_puzzle_2048_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<Puzzle2048HistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            PUZZLE_2048_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn start_puzzle_2048(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<Puzzle2048StartResponse, ApiError> {
+        let mut response: Puzzle2048StartResponse = self.get_json(
+            Method::POST,
+            PUZZLE_2048_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Some(&Puzzle2048StartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.difficulty.trim().is_empty() {
+            response.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn move_puzzle_2048(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        direction: &str,
+    ) -> Result<Puzzle2048MoveResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            PUZZLE_2048_MOVE_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Some(&Puzzle2048MoveRequest {
+                session_id,
+                direction: direction.to_string(),
+            }),
+        )
+    }
+
+    pub fn abandon_puzzle_2048(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+    ) -> Result<Puzzle2048MoveResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            PUZZLE_2048_ABANDON_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Some(&Puzzle2048AbandonRequest { session_id }),
+        )
+    }
+
+    pub fn get_memory_config(&self, auth_token: &str) -> Result<MemoryConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MEMORY_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/memory"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_memory_history(&self, auth_token: &str) -> Result<MemoryHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MEMORY_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/memory"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn start_memory(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<MemoryStartResponse, ApiError> {
+        let mut response: MemoryStartResponse = self.get_json(
+            Method::POST,
+            MEMORY_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/memory"),
+            Some(&MemoryStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.difficulty.trim().is_empty() {
+            response.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn flip_memory(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        index: i32,
+    ) -> Result<MemoryFlipResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            MEMORY_FLIP_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/memory"),
+            Some(&MemoryFlipRequest { session_id, index }),
+        )
+    }
+
+    pub fn get_puzzle_15_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<Puzzle15ConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            PUZZLE_15_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle15"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_puzzle_15_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<Puzzle15HistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            PUZZLE_15_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle15"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn start_puzzle_15(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<Puzzle15StartResponse, ApiError> {
+        let mut response: Puzzle15StartResponse = self.get_json(
+            Method::POST,
+            PUZZLE_15_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle15"),
+            Some(&Puzzle15StartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.difficulty.trim().is_empty() {
+            response.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn move_puzzle_15(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        direction: &str,
+    ) -> Result<Puzzle15MoveResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            PUZZLE_15_MOVE_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle15"),
+            Some(&Puzzle15MoveRequest {
+                session_id,
+                direction: direction.to_string(),
+            }),
+        )
+    }
+
+    pub fn get_sudoku_config(&self, auth_token: &str) -> Result<SudokuConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            SUDOKU_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/sudoku"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_sudoku_history(&self, auth_token: &str) -> Result<SudokuHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            SUDOKU_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/sudoku"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn start_sudoku(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<SudokuStartResponse, ApiError> {
+        let mut response: SudokuStartResponse = self.get_json(
+            Method::POST,
+            SUDOKU_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/sudoku"),
+            Some(&SudokuStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.difficulty.trim().is_empty() {
+            response.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn fill_sudoku(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        row: i32,
+        col: i32,
+        value: Option<i32>,
+    ) -> Result<SudokuFillResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            SUDOKU_FILL_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/sudoku"),
+            Some(&SudokuFillRequest {
+                session_id,
+                row,
+                col,
+                value,
+            }),
         )
     }
 

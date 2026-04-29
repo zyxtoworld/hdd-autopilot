@@ -38,6 +38,33 @@ pub(super) fn render_single_line_text(text: &str, width: usize) -> String {
     rendered
 }
 
+pub(super) fn wrap_text_to_width(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if char_width == 0 {
+            line.push(ch);
+            continue;
+        }
+        if used > 0 && used + char_width > width {
+            lines.push(line);
+            line = String::new();
+            used = 0;
+        }
+        line.push(ch);
+        used += char_width;
+    }
+    lines.push(line);
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +102,18 @@ mod tests {
         let message = "自动羊了个羊处理完成。";
         let formatted = format_batch_return_message(message, true);
         assert_eq!(formatted, "自动羊了个羊处理完成。");
+    }
+
+    #[test]
+    fn wrap_text_to_width_splits_by_display_width() {
+        assert_eq!(
+            wrap_text_to_width("账号 demo@example.com 完成", 10),
+            vec!["账号 demo@", "example.co", "m 完成"]
+        );
+    }
+
+    #[test]
+    fn wrap_text_to_width_keeps_empty_lines_visible() {
+        assert_eq!(wrap_text_to_width("", 10), vec![""]);
     }
 }

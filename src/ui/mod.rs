@@ -18,7 +18,10 @@ mod render;
 #[cfg(windows)]
 mod windows;
 
-use render::{format_batch_return_message, render_single_line_prompt, render_single_line_text};
+use render::{
+    format_batch_return_message, render_single_line_prompt, render_single_line_text,
+    wrap_text_to_width,
+};
 
 pub type CancelFlag = Arc<AtomicBool>;
 pub const ERR_INTERRUPTED: &str = "interrupted";
@@ -304,15 +307,31 @@ where
 
     loop {
         let current_size = task_view_size();
-        if current_size != previous_size {
+        let size_changed = current_size != previous_size;
+        if size_changed {
             previous_size = current_size;
             dirty = true;
             clear_next_render = true;
         }
-        let (_, height) = current_size;
+        let (width, height) = current_size;
         let view_height = task_log_height(height);
+        let mut visual_line_count = wrapped_task_log_line_count(&logs, width as usize);
+        if size_changed {
+            update_scroll_after_line_count_change(
+                visual_line_count,
+                view_height,
+                &mut scroll_top,
+                &mut follow_tail,
+            );
+        }
         if drain_task_logs(&log_rx, &mut logs) {
-            update_scroll_after_log_change(&logs, view_height, &mut scroll_top, &mut follow_tail);
+            visual_line_count = wrapped_task_log_line_count(&logs, width as usize);
+            update_scroll_after_line_count_change(
+                visual_line_count,
+                view_height,
+                &mut scroll_top,
+                &mut follow_tail,
+            );
             dirty = true;
         }
 
@@ -332,8 +351,9 @@ where
                         TaskRunStatus::Failed
                     };
                     outcome = Some(result);
-                    update_scroll_after_log_change(
-                        &logs,
+                    visual_line_count = wrapped_task_log_line_count(&logs, width as usize);
+                    update_scroll_after_line_count_change(
+                        visual_line_count,
                         view_height,
                         &mut scroll_top,
                         &mut follow_tail,
@@ -346,8 +366,9 @@ where
                     logs.push(format!("任务运行失败：{}", error));
                     status = TaskRunStatus::Failed;
                     outcome = Some(Err(error));
-                    update_scroll_after_log_change(
-                        &logs,
+                    visual_line_count = wrapped_task_log_line_count(&logs, width as usize);
+                    update_scroll_after_line_count_change(
+                        visual_line_count,
                         view_height,
                         &mut scroll_top,
                         &mut follow_tail,
@@ -400,17 +421,21 @@ where
                         }
                     }
                     KeyCode::Up => {
-                        scroll_log_up(&logs, view_height, &mut scroll_top, &mut follow_tail, 1);
+                        scroll_log_up(&mut scroll_top, &mut follow_tail, 1);
                         dirty = true;
                     }
                     KeyCode::Down => {
-                        scroll_log_down(&logs, view_height, &mut scroll_top, &mut follow_tail, 1);
+                        scroll_log_down(
+                            visual_line_count,
+                            view_height,
+                            &mut scroll_top,
+                            &mut follow_tail,
+                            1,
+                        );
                         dirty = true;
                     }
                     KeyCode::PageUp => {
                         scroll_log_up(
-                            &logs,
-                            view_height,
                             &mut scroll_top,
                             &mut follow_tail,
                             view_height.saturating_sub(1).max(1),
@@ -419,7 +444,7 @@ where
                     }
                     KeyCode::PageDown => {
                         scroll_log_down(
-                            &logs,
+                            visual_line_count,
                             view_height,
                             &mut scroll_top,
                             &mut follow_tail,
@@ -434,18 +459,24 @@ where
                     }
                     KeyCode::End => {
                         follow_tail = true;
-                        scroll_top = bottom_scroll_top(logs.len(), view_height);
+                        scroll_top = bottom_scroll_top(visual_line_count, view_height);
                         dirty = true;
                     }
                     _ => {}
                 },
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        scroll_log_up(&logs, view_height, &mut scroll_top, &mut follow_tail, 3);
+                        scroll_log_up(&mut scroll_top, &mut follow_tail, 3);
                         dirty = true;
                     }
                     MouseEventKind::ScrollDown => {
-                        scroll_log_down(&logs, view_height, &mut scroll_top, &mut follow_tail, 3);
+                        scroll_log_down(
+                            visual_line_count,
+                            view_height,
+                            &mut scroll_top,
+                            &mut follow_tail,
+                            3,
+                        );
                         dirty = true;
                     }
                     _ => {}
@@ -475,13 +506,13 @@ fn join_task_worker<T>(worker: &mut Option<thread::JoinHandle<T>>) {
     }
 }
 
-fn update_scroll_after_log_change(
-    logs: &[String],
+fn update_scroll_after_line_count_change(
+    total_lines: usize,
     view_height: usize,
     scroll_top: &mut usize,
     follow_tail: &mut bool,
 ) {
-    let bottom = bottom_scroll_top(logs.len(), view_height);
+    let bottom = bottom_scroll_top(total_lines, view_height);
     if *follow_tail {
         *scroll_top = bottom;
     } else {
@@ -494,27 +525,19 @@ fn bottom_scroll_top(total_lines: usize, view_height: usize) -> usize {
     total_lines.saturating_sub(view_height)
 }
 
-fn scroll_log_up(
-    logs: &[String],
-    view_height: usize,
-    scroll_top: &mut usize,
-    follow_tail: &mut bool,
-    amount: usize,
-) {
-    let _ = logs;
-    let _ = view_height;
+fn scroll_log_up(scroll_top: &mut usize, follow_tail: &mut bool, amount: usize) {
     *scroll_top = scroll_top.saturating_sub(amount);
     *follow_tail = false;
 }
 
 fn scroll_log_down(
-    logs: &[String],
+    total_lines: usize,
     view_height: usize,
     scroll_top: &mut usize,
     follow_tail: &mut bool,
     amount: usize,
 ) {
-    let bottom = bottom_scroll_top(logs.len(), view_height);
+    let bottom = bottom_scroll_top(total_lines, view_height);
     *scroll_top = (*scroll_top + amount).min(bottom);
     *follow_tail = *scroll_top >= bottom;
 }
@@ -535,6 +558,7 @@ fn render_task_log_view(
     if clear_screen {
         queue!(stdout, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
     }
+    let visual_logs = wrap_task_logs(logs, width);
     queue_task_line(&mut stdout, 0, width, APP_BANNER)?;
     queue_task_line(&mut stdout, 1, width, prompt)?;
     queue_task_line(
@@ -550,7 +574,7 @@ fn render_task_log_view(
         if terminal_row >= height.saturating_sub(TASK_FOOTER_ROWS) {
             break;
         }
-        let line = logs
+        let line = visual_logs
             .get(scroll_top + row)
             .map(String::as_str)
             .unwrap_or_default();
@@ -561,9 +585,19 @@ fn render_task_log_view(
         &mut stdout,
         height.saturating_sub(1),
         width,
-        &task_footer_line(logs.len(), scroll_top, view_height, follow_tail),
+        &task_footer_line(visual_logs.len(), scroll_top, view_height, follow_tail),
     )?;
     stdout.flush()
+}
+
+fn wrapped_task_log_line_count(logs: &[String], width: usize) -> usize {
+    wrap_task_logs(logs, width).len()
+}
+
+fn wrap_task_logs(logs: &[String], width: usize) -> Vec<String> {
+    logs.iter()
+        .flat_map(|line| wrap_text_to_width(line, width))
+        .collect()
 }
 
 fn queue_task_line(stdout: &mut io::Stdout, row: u16, width: usize, text: &str) -> io::Result<()> {
@@ -649,5 +683,19 @@ mod tests {
     #[test]
     fn bottom_scroll_tracks_last_visible_page() {
         assert_eq!(bottom_scroll_top(30, 10), 20);
+    }
+
+    #[test]
+    fn task_logs_wrap_to_terminal_width() {
+        let logs = vec!["abcdef".to_string(), "中文ab".to_string()];
+
+        assert_eq!(wrap_task_logs(&logs, 4), vec!["abcd", "ef", "中文", "ab"]);
+    }
+
+    #[test]
+    fn wrapped_task_log_line_count_counts_visual_rows() {
+        let logs = vec!["abcdef".to_string(), String::new()];
+
+        assert_eq!(wrapped_task_log_line_count(&logs, 3), 3);
     }
 }

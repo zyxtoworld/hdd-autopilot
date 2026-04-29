@@ -1,4 +1,8 @@
+pub mod memory;
+pub mod puzzle_15;
+pub mod puzzle_2048;
 mod search;
+pub mod sudoku;
 
 use std::collections::HashSet;
 

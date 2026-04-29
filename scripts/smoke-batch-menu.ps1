@@ -1,8 +1,12 @@
 ﻿param(
     [switch]$Build = $true,
     [switch]$SkipCheckin,
+    [switch]$SkipMemory = $true,
+    [switch]$SkipPuzzle15 = $true,
+    [switch]$SkipPuzzle2048,
     [switch]$SkipScratch = $true,
-    [switch]$SkipSheepMatch
+    [switch]$SkipSheepMatch,
+    [switch]$SkipSudoku = $true
 )
 
 Set-StrictMode -Version Latest
@@ -16,8 +20,12 @@ $distExe = Join-Path $root 'dist\hdd-win-x64.exe'
 $artifactDir = Join-Path $root '.tmp-smoke-batch'
 $returnMarker = '已返回上一级菜单。'
 $checkinDoneMarker = '全部账号签到完成。'
+$memoryDoneMarker = '自动记忆翻牌处理完成。'
+$puzzle15DoneMarker = '自动华容道处理完成。'
+$puzzle2048DoneMarker = '自动谜题2048处理完成。'
 $scratchDoneMarker = '自动随机刮刮乐处理完成。'
 $sheepDoneMarker = '自动羊了个羊处理完成。'
+$sudokuDoneMarker = '自动数独处理完成。'
 $freeDoneMarker = '全自动完成所有白嫖玩法。'
 
 if (!(Test-Path $artifactDir)) {
@@ -112,7 +120,7 @@ function Invoke-HeadlessFlow {
 Ensure-Build
 
 if (-not $SkipCheckin) {
-    Invoke-HeadlessFlow -Name 'checkin' -Inputs @('2', '2', '1', '2', '4', '3', '3') -DoneMarker $checkinDoneMarker -LogPaths @(
+    Invoke-HeadlessFlow -Name 'checkin' -Inputs @('2', '2', '1', '2', '8', '3', '3') -DoneMarker $checkinDoneMarker -LogPaths @(
         (Join-Path $root 'var\log\checkin\checkin.log')
     )
 }
@@ -124,8 +132,44 @@ if (-not $SkipScratch) {
         (Join-Path $root 'var\log\scratch\demo_at_example.com.log')
     )
 }
+if (-not $SkipPuzzle2048) {
+    Invoke-HeadlessFlow -Name 'puzzle2048' -Inputs @('2', '2', '1', '4', '8', '3', '3') -DoneMarker $puzzle2048DoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\puzzle_2048\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_2048\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_2048\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_2048\demo_at_example.com.log')
+    )
+}
+
+if (-not $SkipMemory) {
+    Invoke-HeadlessFlow -Name 'memory' -Inputs @('2', '2', '1', '5', '8', '3', '3') -DoneMarker $memoryDoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\memory\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\memory\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\memory\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\memory\demo_at_example.com.log')
+    )
+}
+
+if (-not $SkipPuzzle15) {
+    Invoke-HeadlessFlow -Name 'puzzle15' -Inputs @('2', '2', '1', '6', '8', '3', '3') -DoneMarker $puzzle15DoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\puzzle_15\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_15\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_15\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\puzzle_15\demo_at_example.com.log')
+    )
+}
+
+if (-not $SkipSudoku) {
+    Invoke-HeadlessFlow -Name 'sudoku' -Inputs @('2', '2', '1', '7', '8', '3', '3') -DoneMarker $sudokuDoneMarker -LogPaths @(
+        (Join-Path $root 'var\log\sudoku\aiuser001_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sudoku\aiuser002_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sudoku\aiuser003_at_fuckwall.eu.org.log'),
+        (Join-Path $root 'var\log\sudoku\demo_at_example.com.log')
+    )
+}
+
 if (-not $SkipSheepMatch) {
-    Invoke-HeadlessFlow -Name 'sheep-match' -Inputs @('2', '2', '1', '3', '4', '3', '3') -DoneMarker $sheepDoneMarker -LogPaths @(
+    Invoke-HeadlessFlow -Name 'sheep-match' -Inputs @('2', '2', '1', '3', '8', '3', '3') -DoneMarker $sheepDoneMarker -LogPaths @(
         (Join-Path $root 'var\log\sheepmatch\aiuser001_at_fuckwall.eu.org.log'),
         (Join-Path $root 'var\log\sheepmatch\aiuser002_at_fuckwall.eu.org.log'),
         (Join-Path $root 'var\log\sheepmatch\aiuser003_at_fuckwall.eu.org.log'),
@@ -133,12 +177,28 @@ if (-not $SkipSheepMatch) {
     )
 }
 
-Invoke-HeadlessFlow -Name 'free-auto' -Inputs @('2', '2', '1', '1', '4', '3', '3') -DoneMarker $freeDoneMarker -LogPaths @(
+Invoke-HeadlessFlow -Name 'free-auto' -Inputs @('2', '2', '1', '1', '8', '3', '3') -DoneMarker $freeDoneMarker -LogPaths @(
     (Join-Path $root 'var\log\checkin\checkin.log'),
     (Join-Path $root 'var\log\sheepmatch\aiuser001_at_fuckwall.eu.org.log'),
     (Join-Path $root 'var\log\sheepmatch\aiuser002_at_fuckwall.eu.org.log'),
     (Join-Path $root 'var\log\sheepmatch\aiuser003_at_fuckwall.eu.org.log'),
-    (Join-Path $root 'var\log\sheepmatch\demo_at_example.com.log')
+    (Join-Path $root 'var\log\sheepmatch\demo_at_example.com.log'),
+    (Join-Path $root 'var\log\puzzle_2048\aiuser001_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_2048\aiuser002_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_2048\aiuser003_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_2048\demo_at_example.com.log'),
+    (Join-Path $root 'var\log\memory\aiuser001_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\memory\aiuser002_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\memory\aiuser003_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\memory\demo_at_example.com.log'),
+    (Join-Path $root 'var\log\puzzle_15\aiuser001_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_15\aiuser002_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_15\aiuser003_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\puzzle_15\demo_at_example.com.log'),
+    (Join-Path $root 'var\log\sudoku\aiuser001_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sudoku\aiuser002_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sudoku\aiuser003_at_fuckwall.eu.org.log'),
+    (Join-Path $root 'var\log\sudoku\demo_at_example.com.log')
 )
 
 Write-Output '批量菜单烟测完成。'

@@ -5,7 +5,7 @@ use crate::model::AuthConfig;
 use crate::storage::{cache_from_login, load_cache, save_cache, upsert_account};
 use crate::ui;
 use crate::workflows::free_play::execute_all_free_features;
-use crate::workflows::{checkin, scratch, sheepmatch};
+use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, scratch, sheepmatch, sudoku};
 
 use super::prompt::{prompt_choice, prompt_email, prompt_password};
 use super::{ADD_ACCOUNT_RETRY_PROMPT, render_menu_page};
@@ -136,13 +136,17 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
                 "1. 全自动完成所有白嫖玩法",
                 "2. 自动签到",
                 "3. 自动羊了个羊",
-                "4. 返回上一级菜单",
-                "5. 退出脚本",
+                "4. 自动谜题2048",
+                "5. 自动记忆翻牌",
+                "6. 自动华容道",
+                "7. 自动数独",
+                "8. 返回上一级菜单",
+                "9. 退出脚本",
             ],
-            "请输入选项 (1/2/3/4/5): ",
-            &["1", "2", "3", "4", "5"],
-            "1、2、3、4 或 5",
-            Some("4"),
+            "请输入选项 (1/2/3/4/5/6/7/8/9): ",
+            &["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            "1、2、3、4、5、6、7、8 或 9",
+            Some("8"),
         ) else {
             return false;
         };
@@ -150,8 +154,12 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
             "1" => run_all_free_features(config, auth_path),
             "2" => run_checkin_feature(config, auth_path),
             "3" => run_sheepmatch_feature(config, auth_path),
-            "4" => return false,
-            "5" => return true,
+            "4" => run_puzzle_2048_feature(config, auth_path),
+            "5" => run_memory_feature(config, auth_path),
+            "6" => run_puzzle_15_feature(config, auth_path),
+            "7" => run_sudoku_feature(config, auth_path),
+            "8" => return false,
+            "9" => return true,
             _ => {}
         }
     }
@@ -221,6 +229,110 @@ fn run_scratch_feature(config: &mut AuthConfig, auth_path: &Path) {
     }
 }
 
+fn run_puzzle_2048_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动谜题2048，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(puzzle_2048::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            puzzle_2048::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动谜题2048运行失败：{}", error),
+    }
+}
+
+fn run_memory_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动记忆翻牌，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(memory::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            memory::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动记忆翻牌运行失败：{}", error),
+    }
+}
+
+fn run_puzzle_15_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动华容道，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(puzzle_15::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            puzzle_15::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动华容道运行失败：{}", error),
+    }
+}
+
+fn run_sudoku_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动数独，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(sudoku::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            sudoku::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动数独运行失败：{}", error),
+    }
+}
+
 fn run_sheepmatch_feature(config: &mut AuthConfig, auth_path: &Path) {
     if config.accounts.is_empty() {
         println!("当前还没有可用账号。");
@@ -278,6 +390,50 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         cancel_flag,
                         &sheepmatch_log,
                     )
+                },
+                {
+                    let puzzle_2048_log = log.clone();
+                    move |config, account, cancel_flag| {
+                        puzzle_2048::run_account_for_free_play_with_log(
+                            config,
+                            account,
+                            cancel_flag,
+                            &puzzle_2048_log,
+                        )
+                    }
+                },
+                {
+                    let memory_log = log.clone();
+                    move |config, account, cancel_flag| {
+                        memory::run_account_for_free_play_with_log(
+                            config,
+                            account,
+                            cancel_flag,
+                            &memory_log,
+                        )
+                    }
+                },
+                {
+                    let puzzle_15_log = log.clone();
+                    move |config, account, cancel_flag| {
+                        puzzle_15::run_account_for_free_play_with_log(
+                            config,
+                            account,
+                            cancel_flag,
+                            &puzzle_15_log,
+                        )
+                    }
+                },
+                {
+                    let sudoku_log = log.clone();
+                    move |config, account, cancel_flag| {
+                        sudoku::run_account_for_free_play_with_log(
+                            config,
+                            account,
+                            cancel_flag,
+                            &sudoku_log,
+                        )
+                    }
                 },
                 move |merged_config| save_cache(&save_auth_path, merged_config),
             )
