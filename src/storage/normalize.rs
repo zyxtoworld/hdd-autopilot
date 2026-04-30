@@ -156,17 +156,17 @@ pub(super) fn find_legacy_session(account: &AuthCache, base_url: &str) -> Option
 
 pub(super) fn normalize_account_for_base_url(account: AuthCache, base_url: &str) -> AuthCache {
     let mut account = normalize_account(account);
-    if account.cookies.is_empty() || !cache_usable(&account) {
-        if let Some(session) = find_legacy_session(&account, base_url) {
-            if account.token_type.is_empty() {
-                account.token_type = session.token_type.clone();
-            }
-            if account.access_token.is_empty() {
-                account.access_token = session.access_token.clone();
-            }
-            if account.cookies.is_empty() {
-                account.cookies = session.cookies;
-            }
+    if (account.cookies.is_empty() || !cache_usable(&account))
+        && let Some(session) = find_legacy_session(&account, base_url)
+    {
+        if account.token_type.is_empty() {
+            account.token_type = session.token_type.clone();
+        }
+        if account.access_token.is_empty() {
+            account.access_token = session.access_token.clone();
+        }
+        if account.cookies.is_empty() {
+            account.cookies = session.cookies;
         }
     }
     account.cookies = normalize_cookies(account.cookies);
@@ -241,10 +241,10 @@ pub fn upsert_session(account: AuthCache, session: AuthSession) -> AuthCache {
 }
 
 pub fn upsert_account(mut config: AuthConfig, account: AuthCache) -> AuthConfig {
-    if config.base_url.is_empty() {
-        if let Some(session) = find_legacy_session(&account, "") {
-            config.base_url = session.base_url;
-        }
+    if config.base_url.is_empty()
+        && let Some(session) = find_legacy_session(&account, "")
+    {
+        config.base_url = session.base_url;
     }
     config = normalize_config(config);
     let account = normalize_account_for_base_url(account, &config.base_url);

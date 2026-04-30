@@ -4,14 +4,15 @@ use crate::model::{
     AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
     CheckinTodayResponse, ConfigResponse, HistoryResponse, LoginRequest, LoginResponse,
     MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
-    MemoryStartRequest, MemoryStartResponse, Puzzle15ConfigResponse, Puzzle15HistoryResponse,
-    Puzzle15MoveRequest, Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse,
-    Puzzle2048AbandonRequest, Puzzle2048ConfigResponse, Puzzle2048HistoryResponse,
+    MemoryMeResponse, MemoryStartRequest, MemoryStartResponse, Puzzle15ConfigResponse,
+    Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest, Puzzle15MoveResponse,
+    Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
+    Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
     Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
     ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
     ScratchRevealResponse, SessionCookie, StartRequest, StartResponse, StepRequest, StepResponse,
     SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse,
-    SudokuStartRequest, SudokuStartResponse, TileMeResponse,
+    SudokuMeResponse, SudokuStartRequest, SudokuStartResponse, TileMeResponse,
 };
 use crate::storage::{build_authorization, normalize_base_url};
 use reqwest::blocking::Client;
@@ -27,12 +28,13 @@ use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
     DEFAULT_BASE_URL, DEFAULT_USER_AGENT, LOGIN_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH,
-    MEMORY_HISTORY_PATH, MEMORY_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH,
-    PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
-    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH,
+    MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH, PUZZLE_15_CONFIG_PATH,
+    PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH,
+    PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH, PUZZLE_2048_HISTORY_PATH,
+    PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH,
     SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH,
-    SUDOKU_HISTORY_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH,
-    TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
+    SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH,
+    TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
 };
 
 impl ApiClient {
@@ -308,6 +310,22 @@ impl ApiClient {
         )
     }
 
+    pub fn get_puzzle_2048_me(&self, auth_token: &str) -> Result<Puzzle2048MeResponse, ApiError> {
+        let response: Puzzle2048MeResponse = self.get_json(
+            Method::GET,
+            PUZZLE_2048_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle2048"),
+            Option::<&()>::None,
+        )?;
+        if !response.authenticated {
+            return Err(ApiError::Unauthorized(UnauthorizedError::new(
+                "获取谜题2048账号信息失败：登录状态已失效，请重新登录",
+            )));
+        }
+        Ok(response)
+    }
+
     pub fn start_puzzle_2048(
         &self,
         auth_token: &str,
@@ -380,6 +398,22 @@ impl ApiClient {
         )
     }
 
+    pub fn get_memory_me(&self, auth_token: &str) -> Result<MemoryMeResponse, ApiError> {
+        let response: MemoryMeResponse = self.get_json(
+            Method::GET,
+            MEMORY_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/memory"),
+            Option::<&()>::None,
+        )?;
+        if !response.authenticated {
+            return Err(ApiError::Unauthorized(UnauthorizedError::new(
+                "获取记忆翻牌账号信息失败：登录状态已失效，请重新登录",
+            )));
+        }
+        Ok(response)
+    }
+
     pub fn start_memory(
         &self,
         auth_token: &str,
@@ -441,6 +475,22 @@ impl ApiClient {
         )
     }
 
+    pub fn get_puzzle_15_me(&self, auth_token: &str) -> Result<Puzzle15MeResponse, ApiError> {
+        let response: Puzzle15MeResponse = self.get_json(
+            Method::GET,
+            PUZZLE_15_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/puzzle15"),
+            Option::<&()>::None,
+        )?;
+        if !response.authenticated {
+            return Err(ApiError::Unauthorized(UnauthorizedError::new(
+                "获取华容道账号信息失败：登录状态已失效，请重新登录",
+            )));
+        }
+        Ok(response)
+    }
+
     pub fn start_puzzle_15(
         &self,
         auth_token: &str,
@@ -497,6 +547,22 @@ impl ApiClient {
             &(self.base_url.clone() + "/sudoku"),
             Option::<&()>::None,
         )
+    }
+
+    pub fn get_sudoku_me(&self, auth_token: &str) -> Result<SudokuMeResponse, ApiError> {
+        let response: SudokuMeResponse = self.get_json(
+            Method::GET,
+            SUDOKU_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/sudoku"),
+            Option::<&()>::None,
+        )?;
+        if !response.authenticated {
+            return Err(ApiError::Unauthorized(UnauthorizedError::new(
+                "获取数独账号信息失败：登录状态已失效，请重新登录",
+            )));
+        }
+        Ok(response)
     }
 
     pub fn start_sudoku(

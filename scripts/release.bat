@@ -11,50 +11,58 @@ set "MAC_AMD64_STATUS=failed"
 set "MAC_AMD64_REASON="
 set "MAC_ARM64_STATUS=failed"
 set "MAC_ARM64_REASON="
+set "LINUX_AMD64_STATUS=failed"
+set "LINUX_AMD64_REASON="
 
 call :run_windows
 call :run_macos_amd64
 call :run_macos_arm64
+call :run_linux_amd64
 
 echo.
-echo Release 打包汇总：
+echo Release package summary:
 echo   Windows x64  : !WIN_STATUS! !WIN_REASON!
 echo   macOS amd64  : !MAC_AMD64_STATUS! !MAC_AMD64_REASON!
 echo   macOS arm64  : !MAC_ARM64_STATUS! !MAC_ARM64_REASON!
-
+echo   Linux amd64  : !LINUX_AMD64_STATUS! !LINUX_AMD64_REASON!
 echo.
+
 if /I "!WIN_STATUS!"=="failed" exit /b 1
 if /I "!MAC_AMD64_STATUS!"=="failed" exit /b 1
 if /I "!MAC_ARM64_STATUS!"=="failed" exit /b 1
+if /I "!LINUX_AMD64_STATUS!"=="failed" exit /b 1
+
 if /I "!WIN_STATUS!"=="built_degraded" goto :degraded
 if /I "!MAC_AMD64_STATUS!"=="built_degraded" goto :degraded
 if /I "!MAC_ARM64_STATUS!"=="built_degraded" goto :degraded
-echo Release 打包完成。
+if /I "!LINUX_AMD64_STATUS!"=="built_degraded" goto :degraded
+
+echo Release packaging completed.
 exit /b 0
 
 :degraded
-echo Release 打包完成，部分平台为降级包。
+echo Release packaging completed with degraded package(s).
 exit /b 0
 
 :run_windows
-echo 正在检查 Windows x64 构建环境...
+echo Checking Windows x64 build environment...
 call "%ROOT%\scripts\build-win-x64.bat" --check
 set "CHECK_EXIT=%ERRORLEVEL%"
 if !CHECK_EXIT! neq 0 (
   set "WIN_STATUS=failed"
-  set "WIN_REASON=(基础打包环境缺失)"
-  echo Windows x64 检查失败，继续处理其他平台。
+  set "WIN_REASON=(missing build environment)"
+  echo Windows x64 check failed, continuing with other platforms.
   echo.
   exit /b 0
 )
 
 echo.
-echo 正在构建 Windows x64...
+echo Building Windows x64...
 call "%ROOT%\scripts\build-win-x64.bat" --orchestrated
 set "BUILD_EXIT=%ERRORLEVEL%"
 if !BUILD_EXIT! neq 0 (
   set "WIN_STATUS=failed"
-  set "WIN_REASON=(基础包构建失败)"
+  set "WIN_REASON=(build failed)"
 ) else (
   if exist "%DIST%\hdd-win-x64.status" (
     set /p WIN_STATUS=<"%DIST%\hdd-win-x64.status"
@@ -62,21 +70,21 @@ if !BUILD_EXIT! neq 0 (
     set "WIN_STATUS=built"
   )
   if /I "!WIN_STATUS!"=="built_degraded" (
-    set "WIN_REASON=(原生 CUDA 后端已自动降级)"
+    set "WIN_REASON=(native CUDA backend degraded)"
   ) else (
-    set "WIN_REASON=(完整包)"
+    set "WIN_REASON=(complete)"
   )
 )
 echo.
 exit /b 0
 
 :run_macos_amd64
-echo 正在检查 macOS amd64 构建环境...
+echo Checking macOS amd64 build environment...
 where bash >nul 2>&1
 if errorlevel 1 (
   set "MAC_AMD64_STATUS=failed"
-  set "MAC_AMD64_REASON=(缺少 bash 运行环境)"
-  echo macOS amd64 检查失败，继续处理其他平台。
+  set "MAC_AMD64_REASON=(missing bash)"
+  echo macOS amd64 check failed, continuing with other platforms.
   echo.
   exit /b 0
 )
@@ -85,19 +93,19 @@ bash "%ROOT_BASH%/scripts/build-macos-amd64.sh" --orchestrated --check
 set "CHECK_EXIT=%ERRORLEVEL%"
 if !CHECK_EXIT! neq 0 (
   set "MAC_AMD64_STATUS=failed"
-  set "MAC_AMD64_REASON=(基础打包环境缺失)"
-  echo macOS amd64 检查失败，继续处理其他平台。
+  set "MAC_AMD64_REASON=(missing build environment)"
+  echo macOS amd64 check failed, continuing with other platforms.
   echo.
   exit /b 0
 )
 
 echo.
-echo 正在构建 macOS amd64...
+echo Building macOS amd64...
 bash "%ROOT_BASH%/scripts/build-macos-amd64.sh" --orchestrated
 set "BUILD_EXIT=%ERRORLEVEL%"
 if !BUILD_EXIT! neq 0 (
   set "MAC_AMD64_STATUS=failed"
-  set "MAC_AMD64_REASON=(基础包构建失败)"
+  set "MAC_AMD64_REASON=(build failed)"
 ) else (
   if exist "%DIST%\hdd-macos-amd64.status" (
     set /p MAC_AMD64_STATUS=<"%DIST%\hdd-macos-amd64.status"
@@ -105,21 +113,21 @@ if !BUILD_EXIT! neq 0 (
     set "MAC_AMD64_STATUS=built"
   )
   if /I "!MAC_AMD64_STATUS!"=="built_degraded" (
-    set "MAC_AMD64_REASON=(OpenCL/Metal 已自动降级)"
+    set "MAC_AMD64_REASON=(OpenCL/Metal backend degraded)"
   ) else (
-    set "MAC_AMD64_REASON=(完整包)"
+    set "MAC_AMD64_REASON=(complete)"
   )
 )
 echo.
 exit /b 0
 
 :run_macos_arm64
-echo 正在检查 macOS arm64 构建环境...
+echo Checking macOS arm64 build environment...
 where bash >nul 2>&1
 if errorlevel 1 (
   set "MAC_ARM64_STATUS=failed"
-  set "MAC_ARM64_REASON=(缺少 bash 运行环境)"
-  echo macOS arm64 检查失败，继续处理其他平台。
+  set "MAC_ARM64_REASON=(missing bash)"
+  echo macOS arm64 check failed, continuing with other platforms.
   echo.
   exit /b 0
 )
@@ -128,19 +136,19 @@ bash "%ROOT_BASH%/scripts/build-macos-arm64.sh" --orchestrated --check
 set "CHECK_EXIT=%ERRORLEVEL%"
 if !CHECK_EXIT! neq 0 (
   set "MAC_ARM64_STATUS=failed"
-  set "MAC_ARM64_REASON=(基础打包环境缺失)"
-  echo macOS arm64 检查失败，继续处理其他平台。
+  set "MAC_ARM64_REASON=(missing build environment)"
+  echo macOS arm64 check failed, continuing with other platforms.
   echo.
   exit /b 0
 )
 
 echo.
-echo 正在构建 macOS arm64...
+echo Building macOS arm64...
 bash "%ROOT_BASH%/scripts/build-macos-arm64.sh" --orchestrated
 set "BUILD_EXIT=%ERRORLEVEL%"
 if !BUILD_EXIT! neq 0 (
   set "MAC_ARM64_STATUS=failed"
-  set "MAC_ARM64_REASON=(基础包构建失败)"
+  set "MAC_ARM64_REASON=(build failed)"
 ) else (
   if exist "%DIST%\hdd-macos-arm64.status" (
     set /p MAC_ARM64_STATUS=<"%DIST%\hdd-macos-arm64.status"
@@ -148,9 +156,52 @@ if !BUILD_EXIT! neq 0 (
     set "MAC_ARM64_STATUS=built"
   )
   if /I "!MAC_ARM64_STATUS!"=="built_degraded" (
-    set "MAC_ARM64_REASON=(OpenCL/Metal 已自动降级)"
+    set "MAC_ARM64_REASON=(OpenCL/Metal backend degraded)"
   ) else (
-    set "MAC_ARM64_REASON=(完整包)"
+    set "MAC_ARM64_REASON=(complete)"
+  )
+)
+echo.
+exit /b 0
+
+:run_linux_amd64
+echo Checking Linux amd64 build environment...
+where bash >nul 2>&1
+if errorlevel 1 (
+  set "LINUX_AMD64_STATUS=failed"
+  set "LINUX_AMD64_REASON=(missing bash)"
+  echo Linux amd64 check failed, continuing with other platforms.
+  echo.
+  exit /b 0
+)
+
+bash "%ROOT_BASH%/scripts/build-linux-amd64.sh" --orchestrated --check
+set "CHECK_EXIT=%ERRORLEVEL%"
+if !CHECK_EXIT! neq 0 (
+  set "LINUX_AMD64_STATUS=failed"
+  set "LINUX_AMD64_REASON=(missing build environment)"
+  echo Linux amd64 check failed, continuing with other platforms.
+  echo.
+  exit /b 0
+)
+
+echo.
+echo Building Linux amd64...
+bash "%ROOT_BASH%/scripts/build-linux-amd64.sh" --orchestrated
+set "BUILD_EXIT=%ERRORLEVEL%"
+if !BUILD_EXIT! neq 0 (
+  set "LINUX_AMD64_STATUS=failed"
+  set "LINUX_AMD64_REASON=(build failed)"
+) else (
+  if exist "%DIST%\hdd-linux-amd64.status" (
+    set /p LINUX_AMD64_STATUS=<"%DIST%\hdd-linux-amd64.status"
+  ) else (
+    set "LINUX_AMD64_STATUS=built"
+  )
+  if /I "!LINUX_AMD64_STATUS!"=="built_degraded" (
+    set "LINUX_AMD64_REASON=(native backend degraded)"
+  ) else (
+    set "LINUX_AMD64_REASON=(complete)"
   )
 )
 echo.

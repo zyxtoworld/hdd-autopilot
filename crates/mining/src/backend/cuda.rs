@@ -10,7 +10,8 @@ use crate::backend::cpu::{
     CPU_BENCHMARK_CASE_DURATION, ComputeJob, benchmark_job_for_shape, compute_digest, hex_lower,
 };
 use crate::backend::types::{
-    BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, MineBlockResult, MineResult,
+    BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, GpuBenchmarkConfig,
+    GpuMiningSessionConfig, MineBlockResult, MineResult,
 };
 use crate::error::{MiningError, interrupted_error};
 
@@ -301,12 +302,14 @@ impl CudaBackend {
         let mut best: Option<BenchmarkResult> = None;
         for candidate in CUDA_SOLVER_TEMPLATES {
             let result = self.run_runtime_loop_benchmark_with_cancel(
-                device_index,
                 job,
-                candidate.batch_size,
-                candidate.by_segment,
-                candidate.precompute_refs,
-                GPU_RUNTIME_BENCHMARK_DURATION,
+                GpuBenchmarkConfig {
+                    device_index,
+                    batch_size: candidate.batch_size,
+                    by_segment: candidate.by_segment,
+                    precompute_refs: candidate.precompute_refs,
+                    duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                },
                 &cancel,
             )?;
             if best
@@ -329,26 +332,31 @@ impl CudaBackend {
         duration: Duration,
     ) -> Result<BenchmarkResult, MiningError> {
         self.run_runtime_loop_benchmark_with_cancel(
-            device_index,
             job,
-            batch_size,
-            by_segment,
-            precompute_refs,
-            duration,
+            GpuBenchmarkConfig {
+                device_index,
+                batch_size,
+                by_segment,
+                precompute_refs,
+                duration,
+            },
             &Arc::new(AtomicBool::new(false)),
         )
     }
 
     pub fn run_runtime_loop_benchmark_with_cancel(
         &self,
-        device_index: usize,
         job: &ComputeJob,
-        batch_size: usize,
-        by_segment: bool,
-        precompute_refs: bool,
-        duration: Duration,
+        config: GpuBenchmarkConfig,
         cancel: &Arc<AtomicBool>,
     ) -> Result<BenchmarkResult, MiningError> {
+        let GpuBenchmarkConfig {
+            device_index,
+            batch_size,
+            by_segment,
+            precompute_refs,
+            duration,
+        } = config;
         #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
         {
             let _ = (
@@ -407,15 +415,18 @@ impl CudaBackend {
 
     pub fn start_mining_session(
         &self,
-        device_index: usize,
         job: &ComputeJob,
-        batch_size: usize,
-        by_segment: bool,
-        precompute_refs: bool,
-        start_nonce: u64,
+        config: GpuMiningSessionConfig,
         stop: &Arc<AtomicBool>,
         cancel: &Arc<AtomicBool>,
     ) -> Result<CudaMiningSession, MiningError> {
+        let GpuMiningSessionConfig {
+            device_index,
+            batch_size,
+            by_segment,
+            precompute_refs,
+            start_nonce,
+        } = config;
         let session = cuda_sys::create_session(
             device_index,
             &cuda_sys::CudaJob {

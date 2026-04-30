@@ -10,23 +10,25 @@ MAC_AMD64_STATUS="failed"
 MAC_AMD64_REASON=""
 MAC_ARM64_STATUS="failed"
 MAC_ARM64_REASON=""
+LINUX_AMD64_STATUS="failed"
+LINUX_AMD64_REASON=""
 
 run_windows() {
-  echo "正在检查 Windows x64 构建环境..."
+  echo "Checking Windows x64 build environment..."
   case "$HOST_OS" in
     MINGW*|MSYS*|CYGWIN*)
       if ! command -v powershell.exe >/dev/null 2>&1; then
         WIN_STATUS="failed"
-        WIN_REASON="(缺少 powershell.exe)"
-        echo "Windows x64 检查失败，继续处理其他平台。"
+        WIN_REASON="(missing powershell.exe)"
+        echo "Windows x64 check failed, continuing with other platforms."
         echo
         return 0
       fi
       ;;
     *)
       WIN_STATUS="failed"
-      WIN_REASON="(当前宿主不支持直接调用 Windows 批处理)"
-      echo "Windows x64 检查失败，继续处理其他平台。"
+      WIN_REASON="(current host cannot call Windows batch build)"
+      echo "Windows x64 check failed, continuing with other platforms."
       echo
       return 0
       ;;
@@ -39,17 +41,17 @@ run_windows() {
   fi
   if ! powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '$windows_script' --check; exit \$LASTEXITCODE"; then
     WIN_STATUS="failed"
-    WIN_REASON="(基础打包环境缺失)"
-    echo "Windows x64 检查失败，继续处理其他平台。"
+    WIN_REASON="(missing build environment)"
+    echo "Windows x64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "正在构建 Windows x64..."
+  echo "Building Windows x64..."
   if ! powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '$windows_script' --orchestrated; exit \$LASTEXITCODE"; then
     WIN_STATUS="failed"
-    WIN_REASON="(基础包构建失败)"
+    WIN_REASON="(build failed)"
   else
     if [ -f "$DIST/hdd-win-x64.status" ]; then
       WIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-win-x64.status")"
@@ -57,29 +59,29 @@ run_windows() {
       WIN_STATUS="built"
     fi
     if [ "$WIN_STATUS" = "built_degraded" ]; then
-      WIN_REASON="(原生 CUDA 后端已自动降级)"
+      WIN_REASON="(native CUDA backend degraded)"
     else
-      WIN_REASON="(完整包)"
+      WIN_REASON="(complete)"
     fi
   fi
   echo
 }
 
 run_macos_amd64() {
-  echo "正在检查 macOS amd64 构建环境..."
+  echo "Checking macOS amd64 build environment..."
   if ! bash "$ROOT/scripts/build-macos-amd64.sh" --orchestrated --check; then
     MAC_AMD64_STATUS="failed"
-    MAC_AMD64_REASON="(基础打包环境缺失)"
-    echo "macOS amd64 检查失败，继续处理其他平台。"
+    MAC_AMD64_REASON="(missing build environment)"
+    echo "macOS amd64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "正在构建 macOS amd64..."
+  echo "Building macOS amd64..."
   if ! bash "$ROOT/scripts/build-macos-amd64.sh" --orchestrated; then
     MAC_AMD64_STATUS="failed"
-    MAC_AMD64_REASON="(基础包构建失败)"
+    MAC_AMD64_REASON="(build failed)"
   else
     if [ -f "$DIST/hdd-macos-amd64.status" ]; then
       MAC_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-macos-amd64.status")"
@@ -87,29 +89,29 @@ run_macos_amd64() {
       MAC_AMD64_STATUS="built"
     fi
     if [ "$MAC_AMD64_STATUS" = "built_degraded" ]; then
-      MAC_AMD64_REASON="(OpenCL/Metal 已自动降级)"
+      MAC_AMD64_REASON="(OpenCL/Metal backend degraded)"
     else
-      MAC_AMD64_REASON="(完整包)"
+      MAC_AMD64_REASON="(complete)"
     fi
   fi
   echo
 }
 
 run_macos_arm64() {
-  echo "正在检查 macOS arm64 构建环境..."
+  echo "Checking macOS arm64 build environment..."
   if ! bash "$ROOT/scripts/build-macos-arm64.sh" --orchestrated --check; then
     MAC_ARM64_STATUS="failed"
-    MAC_ARM64_REASON="(基础打包环境缺失)"
-    echo "macOS arm64 检查失败，继续处理其他平台。"
+    MAC_ARM64_REASON="(missing build environment)"
+    echo "macOS arm64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "正在构建 macOS arm64..."
+  echo "Building macOS arm64..."
   if ! bash "$ROOT/scripts/build-macos-arm64.sh" --orchestrated; then
     MAC_ARM64_STATUS="failed"
-    MAC_ARM64_REASON="(基础包构建失败)"
+    MAC_ARM64_REASON="(build failed)"
   else
     if [ -f "$DIST/hdd-macos-arm64.status" ]; then
       MAC_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-macos-arm64.status")"
@@ -117,9 +119,39 @@ run_macos_arm64() {
       MAC_ARM64_STATUS="built"
     fi
     if [ "$MAC_ARM64_STATUS" = "built_degraded" ]; then
-      MAC_ARM64_REASON="(OpenCL/Metal 已自动降级)"
+      MAC_ARM64_REASON="(OpenCL/Metal backend degraded)"
     else
-      MAC_ARM64_REASON="(完整包)"
+      MAC_ARM64_REASON="(complete)"
+    fi
+  fi
+  echo
+}
+
+run_linux_amd64() {
+  echo "Checking Linux amd64 build environment..."
+  if ! bash "$ROOT/scripts/build-linux-amd64.sh" --orchestrated --check; then
+    LINUX_AMD64_STATUS="failed"
+    LINUX_AMD64_REASON="(missing build environment)"
+    echo "Linux amd64 check failed, continuing with other platforms."
+    echo
+    return 0
+  fi
+
+  echo
+  echo "Building Linux amd64..."
+  if ! bash "$ROOT/scripts/build-linux-amd64.sh" --orchestrated; then
+    LINUX_AMD64_STATUS="failed"
+    LINUX_AMD64_REASON="(build failed)"
+  else
+    if [ -f "$DIST/hdd-linux-amd64.status" ]; then
+      LINUX_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-linux-amd64.status")"
+    else
+      LINUX_AMD64_STATUS="built"
+    fi
+    if [ "$LINUX_AMD64_STATUS" = "built_degraded" ]; then
+      LINUX_AMD64_REASON="(native backend degraded)"
+    else
+      LINUX_AMD64_REASON="(complete)"
     fi
   fi
   echo
@@ -128,19 +160,22 @@ run_macos_arm64() {
 run_windows
 run_macos_amd64
 run_macos_arm64
+run_linux_amd64
 
 echo
-echo "Release 打包汇总："
+echo "Release package summary:"
 echo "  Windows x64  : $WIN_STATUS $WIN_REASON"
 echo "  macOS amd64  : $MAC_AMD64_STATUS $MAC_AMD64_REASON"
 echo "  macOS arm64  : $MAC_ARM64_STATUS $MAC_ARM64_REASON"
+echo "  Linux amd64  : $LINUX_AMD64_STATUS $LINUX_AMD64_REASON"
 echo
 
-if [ "$WIN_STATUS" = "failed" ] || [ "$MAC_AMD64_STATUS" = "failed" ] || [ "$MAC_ARM64_STATUS" = "failed" ]; then
+if [ "$WIN_STATUS" = "failed" ] || [ "$MAC_AMD64_STATUS" = "failed" ] || [ "$MAC_ARM64_STATUS" = "failed" ] || [ "$LINUX_AMD64_STATUS" = "failed" ]; then
   exit 1
 fi
-if [ "$WIN_STATUS" = "built_degraded" ] || [ "$MAC_AMD64_STATUS" = "built_degraded" ] || [ "$MAC_ARM64_STATUS" = "built_degraded" ]; then
-  echo "Release 打包完成，部分平台为降级包。"
+
+if [ "$WIN_STATUS" = "built_degraded" ] || [ "$MAC_AMD64_STATUS" = "built_degraded" ] || [ "$MAC_ARM64_STATUS" = "built_degraded" ] || [ "$LINUX_AMD64_STATUS" = "built_degraded" ]; then
+  echo "Release packaging completed with degraded package(s)."
 else
-  echo "Release 打包完成。"
+  echo "Release packaging completed."
 fi

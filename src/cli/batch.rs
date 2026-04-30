@@ -1,10 +1,11 @@
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::model::AuthConfig;
 use crate::storage::{cache_from_login, load_cache, save_cache, upsert_account};
 use crate::ui;
-use crate::workflows::free_play::execute_all_free_features;
+use crate::workflows::free_play::{FreeFeatureRunners, execute_all_free_features};
 use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, scratch, sheepmatch, sudoku};
 
 use super::prompt::{prompt_choice, prompt_email, prompt_password};
@@ -31,11 +32,8 @@ pub(super) fn show_batch_menu(config: &mut AuthConfig, auth_path: &Path) -> bool
         };
         match choice.as_str() {
             "1" => add_one_account(config, auth_path),
-            "2" => {
-                if show_batch_feature_hub(config, auth_path) {
-                    return true;
-                }
-            }
+            "2" if show_batch_feature_hub(config, auth_path) => return true,
+            "2" => {}
             "3" => return false,
             "4" => return true,
             _ => {}
@@ -109,16 +107,10 @@ fn show_batch_feature_hub(config: &mut AuthConfig, auth_path: &Path) -> bool {
             return false;
         };
         match choice.as_str() {
-            "1" => {
-                if show_free_feature_menu(config, auth_path) {
-                    return true;
-                }
-            }
-            "2" => {
-                if show_paid_feature_menu(config, auth_path) {
-                    return true;
-                }
-            }
+            "1" if show_free_feature_menu(config, auth_path) => return true,
+            "1" => {}
+            "2" if show_paid_feature_menu(config, auth_path) => return true,
+            "2" => {}
             "3" => return false,
             "4" => return true,
             _ => {}
@@ -133,7 +125,7 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
         println!();
         let Ok(choice) = prompt_choice(
             &[
-                "1. 全自动完成所有白嫖玩法",
+                "1. 全自动运行所有白嫖玩法",
                 "2. 自动签到",
                 "3. 自动羊了个羊",
                 "4. 自动谜题2048",
@@ -369,10 +361,10 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
     let original_config = config.clone();
     match ui::run_with_escape_interrupt(
         &format!(
-            "开始全自动完成所有白嫖玩法，本次会处理 {} 个账号。",
+            "开始全自动白嫖玩法，本次会处理 {} 个账号；每个账号会并发运行所有白嫖项目。",
             original_config.accounts.len()
         ),
-        Some("全自动完成所有白嫖玩法。"),
+        Some("全自动白嫖玩法已完成。"),
         move |cancel_flag, log| {
             let checkin_log = log.clone();
             let sheepmatch_log = log.clone();
@@ -380,62 +372,76 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                 original_config,
                 &cancel_flag,
                 &log,
-                move |config, account, cancel_flag| {
-                    checkin::run_account_with_log(config, account, cancel_flag, &checkin_log)
-                },
-                move |config, account, cancel_flag| {
-                    sheepmatch::run_account_for_free_play_with_log(
-                        config,
-                        account,
-                        cancel_flag,
-                        &sheepmatch_log,
-                    )
-                },
-                {
-                    let puzzle_2048_log = log.clone();
-                    move |config, account, cancel_flag| {
-                        puzzle_2048::run_account_for_free_play_with_log(
+                FreeFeatureRunners {
+                    run_checkin: Arc::new(move |config, account, cancel_flag| {
+                        let feature_log = feature_log(&checkin_log, "自动签到", &account.email);
+                        checkin::run_account_with_log(config, account, cancel_flag, &feature_log)
+                    }),
+                    run_sheepmatch: Arc::new(move |config, account, cancel_flag| {
+                        let feature_log =
+                            feature_log(&sheepmatch_log, "自动羊了个羊", &account.email);
+                        sheepmatch::run_account_for_free_play_with_log(
                             config,
                             account,
                             cancel_flag,
-                            &puzzle_2048_log,
+                            &feature_log,
                         )
-                    }
+                    }),
+                    run_puzzle_2048: {
+                        let puzzle_2048_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&puzzle_2048_log, "自动谜题2048", &account.email);
+                            puzzle_2048::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_memory: {
+                        let memory_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&memory_log, "自动记忆翻牌", &account.email);
+                            memory::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_puzzle_15: {
+                        let puzzle_15_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&puzzle_15_log, "自动华容道", &account.email);
+                            puzzle_15::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_sudoku: {
+                        let sudoku_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log = feature_log(&sudoku_log, "自动数独", &account.email);
+                            sudoku::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    save_merged_config: Box::new(move |merged_config| {
+                        save_cache(&save_auth_path, merged_config)
+                    }),
                 },
-                {
-                    let memory_log = log.clone();
-                    move |config, account, cancel_flag| {
-                        memory::run_account_for_free_play_with_log(
-                            config,
-                            account,
-                            cancel_flag,
-                            &memory_log,
-                        )
-                    }
-                },
-                {
-                    let puzzle_15_log = log.clone();
-                    move |config, account, cancel_flag| {
-                        puzzle_15::run_account_for_free_play_with_log(
-                            config,
-                            account,
-                            cancel_flag,
-                            &puzzle_15_log,
-                        )
-                    }
-                },
-                {
-                    let sudoku_log = log.clone();
-                    move |config, account, cancel_flag| {
-                        sudoku::run_account_for_free_play_with_log(
-                            config,
-                            account,
-                            cancel_flag,
-                            &sudoku_log,
-                        )
-                    }
-                },
-                move |merged_config| save_cache(&save_auth_path, merged_config),
             )
         },
     ) {
@@ -444,8 +450,18 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
             print_account_summary(config, &auth_path);
         }
         Ok(None) => {}
-        Err(error) => println!("全自动完成所有白嫖玩法运行失败：{}", error),
+        Err(error) => println!("全自动白嫖玩法运行失败：{}", error),
     }
+}
+
+fn feature_log(log: &ui::TaskLog, feature: &str, email: &str) -> ui::TaskLog {
+    let email = email.trim();
+    let email = if email.is_empty() {
+        "未知账号"
+    } else {
+        email
+    };
+    log.prefixed(format!("【{}｜{}】", feature, email))
 }
 
 fn print_account_list(config: &AuthConfig) {

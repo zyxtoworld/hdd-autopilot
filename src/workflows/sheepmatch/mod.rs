@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::ApiClient;
 use crate::model::{
@@ -18,6 +17,7 @@ use crate::model::{
 use crate::runtime::resolve_data_file_path;
 use crate::storage::{save_cache, upsert_account};
 use crate::ui;
+use crate::workflows::common::current_unix_ms;
 
 use self::auth::{ensure_authenticated, with_auth_retry};
 use self::log::{
@@ -30,7 +30,7 @@ use self::round::{
 };
 use self::snapshot::history_item_to_start_response;
 
-pub const DONE_MESSAGE: &str = "自动羊了个羊处理完成。";
+pub const DONE_MESSAGE: &str = "自动羊了个羊已完成。";
 
 #[derive(Debug, Clone)]
 pub struct AccountRunOutput {
@@ -67,13 +67,6 @@ impl AccountRuntime {
     fn email(&self) -> &str {
         self.account.email.trim()
     }
-}
-
-fn current_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }
 
 pub fn run_batch(
@@ -138,7 +131,7 @@ pub fn run_batch(
                 .lock()
                 .unwrap()
                 .log
-                .line("自动羊了个羊线程提前结束：后台线程发生了未处理异常。"),
+                .line("自动羊了个羊任务异常退出，请查看前面的账号日志定位原因。"),
         }
     }
 
@@ -252,10 +245,12 @@ fn run_account(
             state,
             runtime,
             &config,
-            difficulty,
-            seed,
-            next_round,
-            total_rounds,
+            DifficultyRunPlan {
+                difficulty: (*difficulty).to_string(),
+                summary: seed,
+                next_round_index: next_round,
+                total_rounds,
+            },
             &mut used_today_by_difficulty,
             &mut remaining_by_difficulty,
         )?;
@@ -287,11 +282,10 @@ fn run_account(
         current_unix_ms(),
         &all_summaries,
     )?;
-    state
-        .lock()
-        .unwrap()
-        .log
-        .line_fmt(format_args!("账号 {} 运行完成。", runtime.email()));
+    state.lock().unwrap().log.line_fmt(format_args!(
+        "账号 {} 的自动羊了个羊运行完成。",
+        runtime.email()
+    ));
     Ok(all_summaries)
 }
 
@@ -350,18 +344,29 @@ fn drain_pending_sessions(
     Ok(rounds)
 }
 
+struct DifficultyRunPlan {
+    difficulty: String,
+    summary: AccountRunSummary,
+    next_round_index: i32,
+    total_rounds: i32,
+}
+
 fn run_difficulty(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     config: &ConfigResponse,
-    difficulty: &str,
-    mut summary: AccountRunSummary,
-    next_round_index: i32,
-    total_rounds: i32,
+    plan: DifficultyRunPlan,
     used_today_by_difficulty: &mut HashMap<String, i32>,
     remaining_by_difficulty: &mut HashMap<String, i32>,
 ) -> io::Result<AccountRunSummary> {
+    let DifficultyRunPlan {
+        difficulty,
+        mut summary,
+        next_round_index,
+        total_rounds,
+    } = plan;
+    let difficulty = difficulty.as_str();
     if summary.email.trim().is_empty() {
         summary.email = runtime.email().to_string();
         summary.difficulty = difficulty.to_string();
@@ -399,9 +404,6 @@ fn run_difficulty(
         self::round::merge_round_into_summary(&mut summary, &result);
         used_today_by_difficulty.insert(difficulty.to_string(), progress.current);
         remaining_by_difficulty.insert(difficulty.to_string(), result.remaining_after);
-        if !result.error_message.trim().is_empty() {
-            return Ok(summary);
-        }
     }
     Ok(summary)
 }

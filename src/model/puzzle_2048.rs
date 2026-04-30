@@ -97,6 +97,20 @@ pub struct Puzzle2048HistoryResponse {
     pub server_now_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Puzzle2048MeResponse {
+    #[serde(default)]
+    pub active_session: Option<Puzzle2048HistoryItem>,
+    #[serde(default)]
+    pub authenticated: bool,
+    #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
+    pub daily_plays_used: HashMap<String, i32>,
+    #[serde(default)]
+    pub server_now_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Puzzle2048StartRequest {
     pub difficulty: String,
@@ -231,5 +245,20 @@ mod tests {
         assert_eq!(start.daily_plays_remaining[PUZZLE_2048_DIFFICULTY_MINI], 4);
         assert_eq!(step.spawned.as_ref().unwrap().v, 2);
         assert!(step.changed);
+    }
+
+    #[test]
+    fn me_response_accepts_remaining_counts_and_active_session() {
+        let response: Puzzle2048MeResponse = serde_json::from_str(
+            r#"{"active_session":null,"authenticated":true,"daily_plays_remaining":{"classic":0,"jumbo":0,"mini":0},"daily_plays_used":{"classic":3,"jumbo":1,"mini":5},"server_now_ms":1777540011408,"user":{"balance":684.13747521,"email":"demo@example.com","id":889,"status":"active"}}"#,
+        )
+        .unwrap();
+
+        assert!(response.authenticated);
+        assert_eq!(
+            response.daily_plays_remaining[PUZZLE_2048_DIFFICULTY_CLASSIC],
+            0
+        );
+        assert_eq!(response.daily_plays_used[PUZZLE_2048_DIFFICULTY_MINI], 5);
     }
 }

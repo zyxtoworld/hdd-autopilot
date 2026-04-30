@@ -62,12 +62,10 @@ fn read_prompt_line_interactive(prompt: &str, mask_input: bool) -> io::Result<St
                             }
                             io::stdout().flush()?;
                         }
-                        KeyCode::Backspace => {
-                            if !input.is_empty() {
-                                input.pop();
-                                print!("\x08 \x08");
-                                io::stdout().flush()?;
-                            }
+                        KeyCode::Backspace if !input.is_empty() => {
+                            input.pop();
+                            print!("\x08 \x08");
+                            io::stdout().flush()?;
                         }
                         KeyCode::Esc => {
                             println!();
@@ -103,11 +101,11 @@ pub(super) fn prompt_choice(
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
     loop {
         for line in lines {
-            if let Some(escape_choice) = escape_choice {
-                if let Some(rendered) = with_escape_hint(line, escape_choice) {
-                    println!("{}", rendered);
-                    continue;
-                }
+            if let Some(escape_choice) = escape_choice
+                && let Some(rendered) = with_escape_hint(line, escape_choice)
+            {
+                println!("{}", rendered);
+                continue;
             }
             println!("{}", line);
         }
@@ -135,7 +133,7 @@ pub(super) fn prompt_choice(
     }
 }
 
-fn with_escape_hint<'a>(line: &'a str, escape_choice: &str) -> Option<String> {
+fn with_escape_hint(line: &str, escape_choice: &str) -> Option<String> {
     let prefix = format!("{}. ", escape_choice);
     let rest = line.strip_prefix(&prefix)?;
     if rest == "返回上一级菜单" {
@@ -166,12 +164,10 @@ fn read_choice_interactive(allowed: &[&str], escape_choice: Option<&str>) -> io:
                             return Ok(choice.to_string());
                         }
                     }
-                    KeyCode::Backspace => {
-                        if !input.is_empty() {
-                            input.pop();
-                            print!("\x08 \x08");
-                            io::stdout().flush()?;
-                        }
+                    KeyCode::Backspace if !input.is_empty() => {
+                        input.pop();
+                        print!("\x08 \x08");
+                        io::stdout().flush()?;
                     }
                     KeyCode::Char(ch) => {
                         let candidate = ch.to_string();

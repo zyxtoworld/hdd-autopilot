@@ -4,10 +4,11 @@ use crate::api::ApiError;
 use crate::model::{CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse};
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
+use crate::workflows::common::current_unix_ms;
 
 use super::auth::{ensure_authenticated, reauthenticate};
 use super::log::append_checkin_log;
-use super::{AccountRuntime, BatchState, current_unix_ms};
+use super::{AccountRuntime, BatchState};
 
 pub(super) fn run_one_account(
     cancel_flag: &ui::CancelFlag,

@@ -2,6 +2,17 @@
 
 `hdd` 是号多多脚本整合工具的 Rust workspace。根包 `hdd` 负责 CLI 菜单、账号缓存、批量玩法、运行时路径和终端日志视图；`crates/mining` 负责挖矿控制面、CPU/GPU 后端调优、奖励码提交和结果保存；CUDA / OpenCL / Metal 原生计算核心位于 `native/`，并通过对应 `*-sys` crate 接入 Rust。
 
+## 项目规范
+
+项目按 Cargo workspace 的常规布局组织：根包放在 `src/`，内部工具放在 `src/bin/`，示例程序放在 `examples/`，可复用挖矿能力拆到 `crates/mining` 及平台 `*-sys` crate。Rust 代码使用标准模块命名：文件和模块为 `snake_case`，类型为 `UpperCamelCase`，函数和变量为 `snake_case`，常量为 `SCREAMING_SNAKE_CASE`。
+
+开发基线：
+
+- `cargo fmt --check`：统一 rustfmt 风格。
+- `cargo clippy --workspace --all-targets -- -D warnings`：按 Clippy 惯用法收敛实现。
+- `cargo test --workspace`：验证主业务、DTO 兼容、求解器、UI 和挖矿辅助逻辑。
+- `cargo check --examples`：保证示例程序可编译。
+
 ## 快速运行
 
 源码运行：
@@ -15,6 +26,7 @@ cargo run --release --bin hdd
 - `dist/hdd-win-x64.exe`
 - `dist/hdd-macos-amd64`
 - `dist/hdd-macos-arm64`
+- `dist/hdd-linux-amd64`
 
 程序启动时会准备 `var/` 运行时目录，并尝试迁移旧版根目录数据文件。
 
@@ -43,7 +55,7 @@ cargo run --release --bin hdd
 5. 返回上一级菜单
 6. 退出脚本
 
-默认走自动调优模式，不要求用户手动选择 CPU / GPU。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底，并在可用时选择 CPU 与最快 GPU 后端并发参与挖矿。
+默认走自动调优模式，不要求用户手动选择 CPU / GPU。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底；普通自动调优会同时启动 CPU 调优和 GPU 调优，调优完成后选择最快 CPU 与最快 GPU 后端并发参与挖矿。
 
 当前 Rust 接入的计算后端：
 
@@ -52,7 +64,7 @@ cargo run --release --bin hdd
 - OpenCL：macOS 原生后端；仅 macOS target + macOS host 构建时启用。
 - Metal：macOS 原生后端；仅 macOS target + macOS host 构建时启用。
 
-挖矿运行时会输出后端探测、测速、选择、降级和运行状态。GPU 不可用、测速失败或运行期失败时会回退到 CPU 或切换到其他可用后端。
+挖矿运行时会输出后端探测、测速、选择、降级和运行状态。GPU 不可用、测速失败或运行期失败时会回退到 CPU 或切换到其他可用后端。实际挖矿只会选择一个最快 GPU 后端，不会同时启动 CUDA、OpenCL、Metal 三套 GPU 后端。
 
 奖励码处理：
 
@@ -84,7 +96,7 @@ cargo run --release --bin hdd
 
 白嫖玩法菜单：
 
-1. 全自动完成所有白嫖玩法
+1. 全自动运行所有白嫖玩法
 2. 自动签到
 3. 自动羊了个羊
 4. 自动谜题2048
@@ -93,6 +105,16 @@ cargo run --release --bin hdd
 7. 自动数独
 8. 返回上一级菜单
 9. 退出脚本
+
+白嫖玩法的通用规则：
+
+- 每个玩法先查 `config` 和 `me`，读取难度、规则、剩余次数和 `active_session`。
+- 有残局先续玩残局，残局结束后再开新局。
+- 新局从最简单难度开始，一个难度次数用完后再进入下一个难度。
+- `won` 记成功；`lost`、`failed`、`game_over` 记失败。
+- `pending`、`running`、`active` 只表示进行中，不算成功或失败。
+- 单局失败不会停止后续次数；只要 `me` 里还有剩余次数，就继续开下一局。
+- 自动流程不会主动放弃当前局，不主动调用 abandon。
 
 赌狗玩法菜单：
 
@@ -104,7 +126,7 @@ cargo run --release --bin hdd
 
 ### 自动签到
 
-自动签到按账号并发执行。每个账号会先尝试恢复登录态：cookies、token、密码重登依次兜底。流程会查询今日签到状态，已签到时报告失败状态，不重复领取；成功领取后按余额变化或奖励字段计算本次增加值。
+自动签到按账号并发执行。每个账号会先尝试恢复登录状态：cookies、token、密码重登依次兜底。流程会查询今日签到状态，已签到时报告失败状态，不重复领取；成功领取后按余额变化或奖励字段计算本次增加值。
 
 日志写入：
 
@@ -127,13 +149,13 @@ cargo run --release --bin hdd
 
 ### 自动谜题2048
 
-自动谜题2048按账号并发执行。每个账号会读取谜题配置和历史记录，先续玩未结束残局，再按难度顺序处理当天剩余次数：
+自动谜题2048按账号并发执行。每个账号会读取谜题配置和账号状态，先续玩未结束残局，再按难度顺序处理当天剩余次数：
 
 1. 入门 `mini`：3x3，目标 512
 2. 经典 `classic`：4x4，目标 2048
 3. 挑战 `jumbo`：5x5，目标 4096
 
-每一步都会用 `/puzzle2048-api/move` 返回的最新棋盘重新求下一步，不在本地推测服务端生成的新数字。求解器使用合法移动枚举、expectimax 搜索和空格数、可合并数、蛇形单调性、平滑度、最大块角落等启发式评分；接口返回成功后立即进入下一步。
+每一步都会用 `/puzzle2048-api/move` 返回的最新棋盘重新求下一步，不在本地推测服务端生成的新数字。求解器使用合法移动枚举、expectimax 搜索和空格数、可合并数、蛇形单调性、平滑度、最大块角落等启发式评分；接口返回成功后立即进入下一步。流程不会主动 abandon 当前局。
 
 日志写入：
 
@@ -183,7 +205,7 @@ cargo run --release --bin hdd
 
 - `var/log/sudoku/<sanitized-email>.log`
 
-### 全自动完成所有白嫖玩法
+### 全自动运行所有白嫖玩法
 
 全自动白嫖玩法当前包含：
 
@@ -194,7 +216,7 @@ cargo run --release --bin hdd
 5. 自动华容道
 6. 自动数独
 
-不同账号之间并发执行；同一个账号内部的不同白嫖玩法也会并发执行。账号状态会在全部线程完成后合并并保存一次。
+不同账号之间并发执行；同一个账号内部的不同白嫖玩法也会并发执行。账号状态会在全部线程完成后合并并保存一次，并在所有账号都完成后输出总完成提示。
 
 ### 自动随机刮刮乐
 
@@ -253,7 +275,7 @@ hdd/
 │  │  └─ endpoints.rs          # 接口分组、错误文案、本地化辅助
 │  ├─ model/
 │  │  ├─ mod.rs                # 共享 DTO 导出
-│  │  ├─ auth.rs               # 登录态与账号缓存 DTO
+│  │  ├─ auth.rs               # 登录状态与账号缓存 DTO
 │  │  ├─ checkin.rs            # 签到 DTO
 │  │  ├─ memory.rs             # 记忆翻牌 DTO
 │  │  ├─ puzzle_15.rs          # 华容道 DTO
@@ -263,53 +285,50 @@ hdd/
 │  │  └─ sudoku.rs             # 数独 DTO
 │  ├─ workflows/
 │  │  ├─ mod.rs                # 业务流程模块入口
+│  │  ├─ common.rs             # 多账号流程共享状态、认证重试、时间和日志辅助
 │  │  ├─ free_play.rs          # 白嫖玩法组合调度
 │  │  ├─ checkin/
 │  │  │  ├─ mod.rs             # 批量签到入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ auth.rs            # 登录状态校验与重登
 │  │  │  ├─ run.rs             # 单账号签到执行与结果归并
 │  │  │  └─ log.rs             # 签到日志
 │  │  ├─ scratch/
 │  │  │  ├─ mod.rs             # 刮刮乐批量入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ auth.rs            # 登录状态校验与重登
 │  │  │  ├─ round.rs           # 刮刮乐轮次执行、补开奖、历史同步
 │  │  │  └─ log.rs             # 刮刮乐日志
 │  │  ├─ memory/
 │  │  │  ├─ mod.rs             # 记忆翻牌批量入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
 │  │  │  ├─ round.rs           # 残局续玩、新局执行和翻牌策略
 │  │  │  ├─ types.rs           # 记忆翻牌流程内部类型
 │  │  │  └─ log.rs             # 记忆翻牌日志
 │  │  ├─ puzzle_15/
 │  │  │  ├─ mod.rs             # 华容道批量入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
 │  │  │  ├─ round.rs           # 残局续玩、新局执行和移动提交
 │  │  │  ├─ types.rs           # 华容道流程内部类型
 │  │  │  └─ log.rs             # 华容道日志
 │  │  ├─ puzzle_2048/
 │  │  │  ├─ mod.rs             # 谜题2048批量入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
 │  │  │  ├─ round.rs           # 残局续玩、新局执行和棋盘求解
 │  │  │  ├─ types.rs           # 谜题2048流程内部类型
 │  │  │  ├─ log.rs             # 谜题2048日志
 │  │  │  └─ tests.rs           # 谜题2048内部测试
 │  │  ├─ sheepmatch/
 │  │  │  ├─ mod.rs             # 羊了个羊批量入口
-│  │  │  ├─ auth.rs            # 登录态校验与重登
+│  │  │  ├─ auth.rs            # 登录状态校验与重登
 │  │  │  ├─ round.rs           # 对局执行、点击重试、轮次汇总
 │  │  │  ├─ snapshot.rs        # 棋盘快照与固定点击队列
 │  │  │  ├─ log.rs             # 羊了个羊日志
 │  │  │  └─ tests.rs           # 羊了个羊内部测试
 │  │  └─ sudoku/
 │  │     ├─ mod.rs             # 数独批量入口
-│  │     ├─ auth.rs            # 登录态校验与重登
 │  │     ├─ round.rs           # 残局续玩、新局执行和填数提交
 │  │     ├─ types.rs           # 数独流程内部类型
 │  │     └─ log.rs             # 数独日志
 │  ├─ storage/
 │  │  ├─ mod.rs                # 账号缓存导出
 │  │  ├─ cache.rs              # 账号缓存读写、旧格式兼容
-│  │  └─ normalize.rs          # 登录态归一化与合并
+│  │  └─ normalize.rs          # 登录状态归一化与合并
 │  ├─ runtime/
 │  │  ├─ mod.rs                # 运行时路径导出
 │  │  └─ paths.rs              # var/、dist/、legacy 数据迁移与查找
@@ -369,8 +388,8 @@ hdd/
 - `cli`：命令行菜单、选项输入、账号添加、业务流程接线。
 - `api`：HTTP client、cookie、接口边界、接口错误文案。
 - `model`：共享 DTO / serde 结构，兼容接口里的字符串数字和可选字段。
-- `workflows`：签到、刮刮乐、羊了个羊、谜题2048、记忆翻牌、华容道、数独、白嫖组合流程。
-- `storage`：账号缓存读写、旧格式兼容、登录态归一化。
+- `workflows`：签到、刮刮乐、羊了个羊、谜题2048、记忆翻牌、华容道、数独、白嫖组合流程；`common.rs` 承担小游戏共享认证重试、批量状态、账号日志路径、时间格式和日志分句工具。
+- `storage`：账号缓存读写、旧格式兼容、登录状态归一化。
 - `runtime`：路径解析、打包产物查找、legacy 数据迁移。
 - `solver`：羊了个羊搜索辅助模块，以及谜题2048、记忆翻牌、华容道、数独的自动求解器。
 - `ui`：终端准备、固定顶部、应用内滚动日志视图、ESC 中断、单行渲染。
@@ -400,6 +419,12 @@ hdd/
 - 读取时会自动归一化，保存时统一写回当前格式。
 - `token_type` 保留在账号级，默认归一为 `Bearer`。
 
+清理约定：
+
+- `target/`、`.claude/`、`native/*/build/`、`var/log/` 都是本地临时或运行日志，可按需删除。
+- `dist/*.log` 和 `dist/*.status` 是打包过程状态文件，可删除；`dist/hdd-*` 是正式包。
+- `var/data/auth.json` 保存账号登录状态，清理项目时不要误删。
+
 ## 打包产物布局
 
 打包产物和构建状态平铺在 `dist/` 根目录：
@@ -413,6 +438,9 @@ hdd/
 - `dist/hdd-macos-arm64`
 - `dist/hdd-macos-arm64.log`
 - `dist/hdd-macos-arm64.status`
+- `dist/hdd-linux-amd64`
+- `dist/hdd-linux-amd64.log`
+- `dist/hdd-linux-amd64.status`
 
 运行时查找打包文件时，按顺序检查：
 
@@ -443,7 +471,13 @@ macOS arm64：
 bash scripts/build-macos-arm64.sh
 ```
 
-macOS 脚本支持 `--check` 和 `--orchestrated`，release 脚本内部会使用 orchestrated 模式。
+Linux amd64：
+
+```bash
+bash scripts/build-linux-amd64.sh
+```
+
+macOS / Linux 脚本支持 `--check` 和 `--orchestrated`，release 脚本内部会使用 orchestrated 模式。
 
 ### 默认 release
 
@@ -459,11 +493,12 @@ bash 下：
 bash scripts/release.sh
 ```
 
-默认会依次尝试三个平台：
+默认会依次尝试四个平台：
 
 - Windows x64
 - macOS amd64
 - macOS arm64
+- Linux amd64
 
 release 脚本会在全部目标都处理完后统一输出汇总。
 
@@ -480,6 +515,7 @@ release 脚本会在全部目标都处理完后统一输出汇总。
 - Windows CUDA：需要 Windows x64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；缺失时禁用 CUDA 后端，不影响 CPU 包。
 - macOS OpenCL / Metal：需要 macOS host/target 和 Apple SDK；缺失时禁用对应后端，不影响基础包。
 - macOS cross/non-macOS 构建路径可使用 `cargo-zigbuild` 与 `zig`；脚本会根据环境探测可行路径。
+- Linux amd64：当前打基础 CPU 包，交叉构建需要 `cargo-zigbuild` + `zig`，或在 Linux amd64 host 上用本机 C 编译器构建。
 
 ## 开发与测试
 
@@ -499,6 +535,18 @@ cargo check --workspace
 
 ```bash
 cargo test --workspace
+```
+
+Clippy 惯用法检查：
+
+```bash
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+示例程序检查：
+
+```bash
+cargo check --examples
 ```
 
 benchmark 辅助工具：
@@ -538,7 +586,7 @@ powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 - 自动签到
 - 自动羊了个羊
 - 自动谜题2048
-- 全自动完成所有白嫖玩法
+- 全自动运行所有白嫖玩法
 
 自动随机刮刮乐、自动记忆翻牌、自动华容道、自动数独的独立入口默认跳过，避免额外消耗次数；需要完整 smoke 时运行：
 

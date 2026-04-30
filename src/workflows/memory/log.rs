@@ -1,10 +1,12 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-
-use chrono::{TimeZone, Utc};
+use std::io;
+use std::path::Path;
 
 use crate::ui;
+use crate::workflows::common::{
+    append_account_log_line as append_line, beijing_time, join_log_clauses as join_clauses,
+    reason_clause as format_reason_clause, round_mode_label,
+    round_progress_label as format_round_progress,
+};
 
 use super::types::{MemoryDifficultySummary, MemoryRoundSummary};
 
@@ -145,44 +147,6 @@ fn format_runtime_round_result_line(result: &MemoryRoundSummary) -> String {
     )
 }
 
-fn append_line(log_dir: &Path, email: &str, content: &str) -> io::Result<()> {
-    fs::create_dir_all(log_dir)?;
-    let path = log_file_path(log_dir, email);
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(content.as_bytes())?;
-    file.flush()
-}
-
-fn log_file_path(log_dir: &Path, email: &str) -> PathBuf {
-    let mut sanitized = String::new();
-    for ch in email.trim().to_ascii_lowercase().chars() {
-        match ch {
-            'a'..='z' | '0'..='9' | '.' | '_' | '-' | '@' => sanitized.push(ch),
-            _ => sanitized.push('_'),
-        }
-    }
-    if sanitized.is_empty() {
-        sanitized = "unknown".to_string();
-    }
-    log_dir.join(sanitized.replace('@', "_at_") + ".log")
-}
-
-fn join_clauses(parts: &[String]) -> String {
-    let parts = parts
-        .iter()
-        .map(|part| part.trim())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        return String::new();
-    }
-    parts.join("，") + "。\n"
-}
-
-fn round_mode_label(continued: bool) -> &'static str {
-    if continued { "续玩" } else { "新开局" }
-}
-
 fn round_status_label(result: &MemoryRoundSummary) -> String {
     if !result.error_message.trim().is_empty() {
         return "失败".to_string();
@@ -190,31 +154,8 @@ fn round_status_label(result: &MemoryRoundSummary) -> String {
     match result.status.trim().to_ascii_lowercase().as_str() {
         "won" => "成功通关".to_string(),
         "game_over" | "lost" | "failed" => "未通关".to_string(),
-        "pending" => "已暂停".to_string(),
+        "pending" | "running" | "active" => "残局未结算".to_string(),
         _ if result.status.trim().is_empty() => "已结束".to_string(),
         _ => result.status.clone(),
     }
-}
-
-fn format_round_progress(current: i32, total: i32) -> String {
-    format!("今天第 {}/{} 局", current.max(1), total.max(current.max(1)))
-}
-
-fn format_reason_clause(error_message: &str) -> String {
-    let error_message = error_message.trim();
-    if error_message.is_empty() {
-        return String::new();
-    }
-    format!("原因：{}", error_message)
-}
-
-fn beijing_time(when_unix_ms: i64) -> chrono::DateTime<chrono::FixedOffset> {
-    Utc.timestamp_millis_opt(when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            Utc.timestamp_millis_opt(super::current_unix_ms())
-                .single()
-                .unwrap()
-        })
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
 }

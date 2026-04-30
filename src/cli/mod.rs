@@ -31,18 +31,16 @@ pub fn run() {
 
         match prompt_main_menu_choice() {
             Ok(choice) => match choice.as_str() {
-                "1" => {
-                    if show_mining_menu() {
-                        println!("已退出脚本。");
-                        return;
-                    }
+                "1" if show_mining_menu() => {
+                    println!("已退出脚本。");
+                    return;
                 }
-                "2" => {
-                    if show_batch_menu(&mut config, &auth_path) {
-                        println!("已退出脚本。");
-                        return;
-                    }
+                "1" => {}
+                "2" if show_batch_menu(&mut config, &auth_path) => {
+                    println!("已退出脚本。");
+                    return;
                 }
+                "2" => {}
                 "3" => {
                     println!("已退出脚本。");
                     return;

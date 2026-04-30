@@ -60,7 +60,7 @@ pub(super) fn validate_solvable(board: &[u8], size: usize) -> Result<(), String>
     let inversions = inversion_count(board);
     let blank = blank_index(board)?;
     let solvable = if size % 2 == 1 {
-        inversions % 2 == 0
+        inversions.is_multiple_of(2)
     } else {
         let blank_row_from_bottom = size - blank / size;
         (inversions + blank_row_from_bottom) % 2 == 1
@@ -84,14 +84,14 @@ pub(super) fn heuristic(board: &[u8], distance: &[Vec<i32>]) -> i32 {
 pub(super) fn manhattan_distance_table(size: usize) -> Vec<Vec<i32>> {
     let total = size * size;
     let mut table = vec![vec![0; total]; total];
-    for tile in 1..total {
+    for (tile, row_distances) in table.iter_mut().enumerate().take(total).skip(1) {
         let goal_index = tile - 1;
         let goal_row = goal_index / size;
         let goal_col = goal_index % size;
-        for index in 0..total {
+        for (index, distance) in row_distances.iter_mut().enumerate().take(total) {
             let row = index / size;
             let col = index % size;
-            table[tile][index] = goal_row.abs_diff(row) as i32 + goal_col.abs_diff(col) as i32;
+            *distance = goal_row.abs_diff(row) as i32 + goal_col.abs_diff(col) as i32;
         }
     }
     table

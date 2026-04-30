@@ -1,4 +1,5 @@
 use crate::backend::cuda::{GPU_FINALIST_COUNT, GPU_RUNTIME_BENCHMARK_DURATION};
+use crate::backend::types::GpuBenchmarkConfig;
 use crate::backend::{
     BackendDescriptor, BenchmarkResult, ComputeJob, CudaBackend, MetalBackend, OpenclBackend,
 };
@@ -194,12 +195,14 @@ impl Runner {
             CudaBackend::solver_templates(),
             |candidate| {
                 self.cuda_backend.run_runtime_loop_benchmark_with_cancel(
-                    descriptor.device_index.unwrap_or(0),
                     job,
-                    candidate.batch_size,
-                    candidate.by_segment,
-                    candidate.precompute_refs,
-                    GPU_RUNTIME_BENCHMARK_DURATION,
+                    GpuBenchmarkConfig {
+                        device_index: descriptor.device_index.unwrap_or(0),
+                        batch_size: candidate.batch_size,
+                        by_segment: candidate.by_segment,
+                        precompute_refs: candidate.precompute_refs,
+                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                    },
                     &self.cancel,
                 )
             },
@@ -217,12 +220,14 @@ impl Runner {
             OpenclBackend::solver_templates(),
             |candidate| {
                 self.opencl_backend.run_runtime_loop_benchmark_with_cancel(
-                    descriptor.device_index.unwrap_or(0),
                     job,
-                    candidate.batch_size,
-                    candidate.by_segment,
-                    candidate.precompute_refs,
-                    GPU_RUNTIME_BENCHMARK_DURATION,
+                    GpuBenchmarkConfig {
+                        device_index: descriptor.device_index.unwrap_or(0),
+                        batch_size: candidate.batch_size,
+                        by_segment: candidate.by_segment,
+                        precompute_refs: candidate.precompute_refs,
+                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                    },
                     &self.cancel,
                 )
             },
@@ -240,12 +245,14 @@ impl Runner {
             MetalBackend::solver_templates(),
             |candidate| {
                 self.metal_backend.run_runtime_loop_benchmark_with_cancel(
-                    descriptor.device_index.unwrap_or(0),
                     job,
-                    candidate.batch_size,
-                    candidate.by_segment,
-                    candidate.precompute_refs,
-                    GPU_RUNTIME_BENCHMARK_DURATION,
+                    GpuBenchmarkConfig {
+                        device_index: descriptor.device_index.unwrap_or(0),
+                        batch_size: candidate.batch_size,
+                        by_segment: candidate.by_segment,
+                        precompute_refs: candidate.precompute_refs,
+                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                    },
                     &self.cancel,
                 )
             },

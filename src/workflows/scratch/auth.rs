@@ -1,15 +1,22 @@
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::api::{ApiClient, ApiError, is_unauthorized};
 use crate::model::AuthSession;
 use crate::storage::{
     build_authorization, cache_from_login, get_session, password_usable, upsert_session,
 };
+use crate::ui;
+use crate::workflows::common::{humanize_retryable_api_error, is_retryable_api_error};
 
 use super::{AccountRuntime, BatchState};
 
+const API_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+const API_RETRY_LOG_EVERY: usize = 10;
+
 pub(super) fn with_auth_retry<T, F>(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     action: F,
@@ -17,17 +24,37 @@ pub(super) fn with_auth_retry<T, F>(
 where
     F: Fn(&ApiClient, &str) -> Result<T, ApiError>,
 {
-    match action(&runtime.api_client, &runtime.auth_token) {
-        Ok(value) => Ok(value),
-        Err(error) if is_unauthorized(&error) => {
-            state.lock().unwrap().log.line_fmt(format_args!(
-                "账号 {} 的登录状态中途失效了，正在重新登录后继续。",
-                runtime.email()
-            ));
-            reauthenticate(state, runtime)?;
-            action(&runtime.api_client, &runtime.auth_token).map_err(api_error_to_io_error)
+    let mut attempts = 0usize;
+    loop {
+        ui::check_cancel(cancel_flag)?;
+        attempts += 1;
+        let result = match action(&runtime.api_client, &runtime.auth_token) {
+            Ok(value) => Ok(value),
+            Err(error) if is_unauthorized(&error) => {
+                state.lock().unwrap().log.line_fmt(format_args!(
+                    "账号 {} 的登录状态中途失效了，正在重新登录后继续。",
+                    runtime.email()
+                ));
+                reauthenticate(state, runtime)?;
+                action(&runtime.api_client, &runtime.auth_token)
+            }
+            other => other,
+        };
+        match result {
+            Ok(value) => return Ok(value),
+            Err(error) if is_retryable_api_error(&error) => {
+                if attempts == 1 || attempts.is_multiple_of(API_RETRY_LOG_EVERY) {
+                    state.lock().unwrap().log.line_fmt(format_args!(
+                        "账号 {} 的刮刮乐接口暂时连不上，正在等待接口恢复后继续（第 {} 次）：{}",
+                        runtime.email(),
+                        attempts,
+                        humanize_retryable_api_error(&error)
+                    ));
+                }
+                ui::sleep_with_cancel(cancel_flag, API_RETRY_BACKOFF)?;
+            }
+            Err(error) => return Err(api_error_to_io_error(error)),
         }
-        Err(error) => Err(api_error_to_io_error(error)),
     }
 }
 
@@ -134,7 +161,7 @@ pub(super) fn reauthenticate(
     runtime: &mut AccountRuntime,
 ) -> io::Result<()> {
     state.lock().unwrap().log.line_fmt(format_args!(
-        "检测到账号 {} 的登录态失效，尝试重新登录。",
+        "检测到账号 {} 的登录状态失效，尝试重新登录。",
         runtime.email()
     ));
     runtime.auth_token.clear();

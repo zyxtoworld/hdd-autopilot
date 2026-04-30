@@ -1,28 +1,21 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-
-use chrono::{TimeZone, Utc};
+use std::io;
+use std::path::Path;
 
 use crate::model::{AccountRunSummary, RoundResultSummary};
 use crate::ui;
+use crate::workflows::common::{
+    append_account_log_line as append_line, beijing_time, join_log_clauses as join_clauses,
+    reason_clause as format_reason_clause, round_mode_label,
+};
 
 pub(super) fn append_run_header(log_dir: &Path, email: &str, when_unix_ms: i64) -> io::Result<()> {
-    let when = Utc
-        .timestamp_millis_opt(when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            Utc.timestamp_millis_opt(super::current_unix_ms())
-                .single()
-                .unwrap()
-        });
+    let when = beijing_time(when_unix_ms);
     append_line(
         log_dir,
         email,
         &format!(
             "[{}] 开始运行，正在处理账号 {}。\n",
-            when.with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
-                .format("%Y-%m-%d %H:%M:%S"),
+            when.format("%Y-%m-%d %H:%M:%S"),
             email
         ),
     )
@@ -49,14 +42,7 @@ pub(super) fn append_account_summary(
     when_unix_ms: i64,
     summaries: &[AccountRunSummary],
 ) -> io::Result<()> {
-    let when = Utc
-        .timestamp_millis_opt(when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            Utc.timestamp_millis_opt(super::current_unix_ms())
-                .single()
-                .unwrap()
-        });
+    let when = beijing_time(when_unix_ms);
     let total_played: i32 = summaries.iter().map(|item| item.played).sum();
     let total_won: i32 = summaries.iter().map(|item| item.won).sum();
     let total_abandoned: i32 = summaries.iter().map(|item| item.abandoned).sum();
@@ -69,8 +55,7 @@ pub(super) fn append_account_summary(
         &join_clauses(&[
             format!(
                 "[{}] 账号 {} 的全部难度汇总：一共玩了 {} 局",
-                when.with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
-                    .format("%Y-%m-%d %H:%M:%S"),
+                when.format("%Y-%m-%d %H:%M:%S"),
                 email,
                 total_played
             ),
@@ -84,15 +69,7 @@ pub(super) fn append_account_summary(
 }
 
 fn format_round_result_line(result: &RoundResultSummary) -> String {
-    let when = Utc
-        .timestamp_millis_opt(result.when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            Utc.timestamp_millis_opt(super::current_unix_ms())
-                .single()
-                .unwrap()
-        })
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap());
+    let when = beijing_time(result.when_unix_ms);
     join_clauses(&[
         format!(
             "[{}] {} 的{}难度第 {} 局（{}，对局 {}）已结算：{}",
@@ -118,14 +95,7 @@ fn format_difficulty_summary_line(summary: &AccountRunSummary) -> String {
     join_clauses(&[
         format!(
             "[{}] {} 的{}难度已跑完：一共玩了 {} 局",
-            Utc.timestamp_millis_opt(summary.when_unix_ms)
-                .single()
-                .unwrap_or_else(|| Utc
-                    .timestamp_millis_opt(super::current_unix_ms())
-                    .single()
-                    .unwrap())
-                .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
-                .format("%Y-%m-%d %H:%M:%S"),
+            beijing_time(summary.when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
             summary.email,
             localized_difficulty(&summary.difficulty),
             summary.played
@@ -140,40 +110,6 @@ fn format_difficulty_summary_line(summary: &AccountRunSummary) -> String {
     ])
 }
 
-fn append_line(log_dir: &Path, email: &str, content: &str) -> io::Result<()> {
-    fs::create_dir_all(log_dir)?;
-    let path = log_file_path(log_dir, email);
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(content.as_bytes())?;
-    file.flush()
-}
-
-fn log_file_path(log_dir: &Path, email: &str) -> PathBuf {
-    let mut sanitized = String::new();
-    for ch in email.trim().to_ascii_lowercase().chars() {
-        match ch {
-            'a'..='z' | '0'..='9' | '.' | '_' | '-' | '@' => sanitized.push(ch),
-            _ => sanitized.push('_'),
-        }
-    }
-    if sanitized.is_empty() {
-        sanitized = "unknown".to_string();
-    }
-    log_dir.join(sanitized.replace('@', "_at_") + ".log")
-}
-
-fn join_clauses(parts: &[String]) -> String {
-    let parts = parts
-        .iter()
-        .map(|part| part.trim())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        return String::new();
-    }
-    parts.join("，") + "。\n"
-}
-
 fn format_balance_clause(balance: Option<f64>) -> String {
     balance
         .map(|value| format!("当前余额 {:.8}", value))
@@ -182,7 +118,7 @@ fn format_balance_clause(balance: Option<f64>) -> String {
 
 fn format_powerups_clause(used_powerups: &[String]) -> String {
     if used_powerups.is_empty() {
-        return "这局没用道具".to_string();
+        return "未使用道具".to_string();
     }
     format!(
         "用到的道具：{}",
@@ -194,29 +130,19 @@ fn format_powerups_clause(used_powerups: &[String]) -> String {
     )
 }
 
-fn format_reason_clause(error_message: &str) -> String {
-    let error_message = error_message.trim();
-    if error_message.is_empty() {
-        return String::new();
-    }
-    format!("原因：{}", error_message)
-}
-
-fn round_mode_label(continued: bool) -> &'static str {
-    if continued { "续玩" } else { "新开局" }
-}
-
 fn round_status_label(result: &RoundResultSummary) -> String {
     if !result.error_message.trim().is_empty() {
         return "失败".to_string();
     }
-    match result.status.as_str() {
+    match result.status.trim().to_ascii_lowercase().as_str() {
         "won" => "成功通关".to_string(),
+        "lost" | "failed" | "game_over" => "未通关".to_string(),
         "abandoned" => "已放弃".to_string(),
         "undo" => "用到撤回后暂停重算".to_string(),
         "remove" => "用到移除后暂停重算".to_string(),
         "shuffle" => "用到洗牌后暂停重算".to_string(),
-        _ if result.status.trim().is_empty() => "已结束".to_string(),
+        "pending" | "running" | "active" => "残局未结算".to_string(),
+        _ if result.status.trim().is_empty() => "残局未结算".to_string(),
         _ => result.status.clone(),
     }
 }
@@ -228,13 +154,13 @@ fn format_runtime_round_result_line(result: &RoundResultSummary) -> String {
         format!("，原因：{}", result.error_message.trim())
     };
     format!(
-        "账号 {} 的{}难度{}结果：{}，{}，耗时 {}ms，奖励 {:.8}，总余额 {}，今天还剩 {} 次，走了 {} 步{}。",
+        "账号 {} 的{}难度{}结果：{}，{}，耗时 {}ms，奖励 {:.8}，当前余额 {}，今天还剩 {} 次，走了 {} 步{}。",
         result.email,
         localized_difficulty(&result.difficulty),
         super::format_round_progress(result.round_index, result.round_total),
         round_status_label(result),
         if result.used_powerups.is_empty() {
-            "没用道具".to_string()
+            "未使用道具".to_string()
         } else {
             format!(
                 "用了{}",

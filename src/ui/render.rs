@@ -89,19 +89,19 @@ mod tests {
 
     #[test]
     fn wait_for_batch_return_formats_headless_message() {
-        let message = "自动羊了个羊处理完成。";
+        let message = "自动羊了个羊已完成。";
         let formatted = format_batch_return_message(message, false);
         assert_eq!(
             formatted,
-            "自动羊了个羊处理完成。当前是非交互模式；如需返回上一级菜单，请在交互终端中按 ESC。"
+            "自动羊了个羊已完成。当前是非交互模式；如需返回上一级菜单，请在交互终端中按 ESC。"
         );
     }
 
     #[test]
     fn wait_for_batch_return_keeps_interactive_message_clean() {
-        let message = "自动羊了个羊处理完成。";
+        let message = "自动羊了个羊已完成。";
         let formatted = format_batch_return_message(message, true);
-        assert_eq!(formatted, "自动羊了个羊处理完成。");
+        assert_eq!(formatted, "自动羊了个羊已完成。");
     }
 
     #[test]

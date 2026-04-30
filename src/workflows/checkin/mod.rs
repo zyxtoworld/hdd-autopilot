@@ -5,7 +5,6 @@ mod run;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::ApiClient;
 use crate::model::{AuthCache, AuthConfig, CheckinResult};
@@ -209,11 +208,4 @@ fn load_one_balance_line(
             line
         }
     }
-}
-
-fn current_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }

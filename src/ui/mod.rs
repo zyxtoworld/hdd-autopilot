@@ -62,6 +62,18 @@ impl TaskLog {
         self.line(args.to_string());
     }
 
+    pub fn prefixed(&self, prefix: impl Into<String>) -> Self {
+        let parent = self.clone();
+        let prefix = prefix.into();
+        Self::new(move |line| {
+            if line.is_empty() {
+                parent.line("");
+            } else {
+                parent.line(format!("{} {}", prefix, line));
+            }
+        })
+    }
+
     fn sender(sender: mpsc::Sender<String>) -> Self {
         Self::new(move |line| {
             let _ = sender.send(line);
@@ -221,10 +233,11 @@ pub fn wait_for_escape() -> io::Result<()> {
         if !event::poll(Duration::from_millis(200))? {
             continue;
         }
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Release && key.code == KeyCode::Esc {
-                return Ok(());
-            }
+        if let Event::Key(key) = event::read()?
+            && key.kind != KeyEventKind::Release
+            && key.code == KeyCode::Esc
+        {
+            return Ok(());
         }
     }
 }
@@ -383,22 +396,24 @@ where
             drop(screen.take());
             return Ok(None);
         }
-        if std::env::var("HDD_SMOKE_AUTO_RETURN").is_ok() && outcome.is_some() {
+        if std::env::var("HDD_SMOKE_AUTO_RETURN").is_ok()
+            && let Some(result) = outcome.take()
+        {
             drop(screen.take());
-            return outcome.unwrap().map(Some);
+            return result.map(Some);
         }
 
         if dirty {
-            render_task_log_view(
-                &prompt,
-                &logs,
+            render_task_log_view(TaskLogView {
+                prompt: &prompt,
+                logs: &logs,
                 scroll_top,
                 view_height,
                 follow_tail,
                 status,
-                finish_message.as_deref(),
-                clear_next_render,
-            )?;
+                finish_message: finish_message.as_deref(),
+                clear_screen: clear_next_render,
+            })?;
             dirty = false;
             clear_next_render = false;
         }
@@ -542,40 +557,42 @@ fn scroll_log_down(
     *follow_tail = *scroll_top >= bottom;
 }
 
-fn render_task_log_view(
-    prompt: &str,
-    logs: &[String],
+struct TaskLogView<'a> {
+    prompt: &'a str,
+    logs: &'a [String],
     scroll_top: usize,
     view_height: usize,
     follow_tail: bool,
     status: TaskRunStatus,
-    finish_message: Option<&str>,
+    finish_message: Option<&'a str>,
     clear_screen: bool,
-) -> io::Result<()> {
+}
+
+fn render_task_log_view(view: TaskLogView<'_>) -> io::Result<()> {
     let (width, height) = task_view_size();
     let width = width as usize;
     let mut stdout = io::stdout();
-    if clear_screen {
+    if view.clear_screen {
         queue!(stdout, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
     }
-    let visual_logs = wrap_task_logs(logs, width);
+    let visual_logs = wrap_task_logs(view.logs, width);
     queue_task_line(&mut stdout, 0, width, APP_BANNER)?;
-    queue_task_line(&mut stdout, 1, width, prompt)?;
+    queue_task_line(&mut stdout, 1, width, view.prompt)?;
     queue_task_line(
         &mut stdout,
         2,
         width,
-        &task_help_line(status, finish_message),
+        &task_help_line(view.status, view.finish_message),
     )?;
     queue_task_line(&mut stdout, 3, width, &"─".repeat(width))?;
 
-    for row in 0..view_height {
+    for row in 0..view.view_height {
         let terminal_row = TASK_HEADER_ROWS + row as u16;
         if terminal_row >= height.saturating_sub(TASK_FOOTER_ROWS) {
             break;
         }
         let line = visual_logs
-            .get(scroll_top + row)
+            .get(view.scroll_top + row)
             .map(String::as_str)
             .unwrap_or_default();
         queue_task_line(&mut stdout, terminal_row, width, line)?;
@@ -585,7 +602,12 @@ fn render_task_log_view(
         &mut stdout,
         height.saturating_sub(1),
         width,
-        &task_footer_line(visual_logs.len(), scroll_top, view_height, follow_tail),
+        &task_footer_line(
+            visual_logs.len(),
+            view.scroll_top,
+            view.view_height,
+            view.follow_tail,
+        ),
     )?;
     stdout.flush()
 }

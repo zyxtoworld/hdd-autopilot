@@ -79,6 +79,20 @@ pub struct SudokuHistoryResponse {
     pub server_now_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SudokuMeResponse {
+    #[serde(default)]
+    pub active_session: Option<SudokuSession>,
+    #[serde(default)]
+    pub authenticated: bool,
+    #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
+    pub daily_plays_used: HashMap<String, i32>,
+    #[serde(default)]
+    pub server_now_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SudokuStartRequest {
     pub difficulty: String,

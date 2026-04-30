@@ -27,6 +27,32 @@ pub struct BenchmarkResult {
     pub attempts_per_s: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuMiningSessionConfig {
+    pub workers: usize,
+    pub concurrency: usize,
+    pub start_nonce: usize,
+    pub nonce_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuBenchmarkConfig {
+    pub device_index: usize,
+    pub batch_size: usize,
+    pub by_segment: bool,
+    pub precompute_refs: bool,
+    pub duration: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuMiningSessionConfig {
+    pub device_index: usize,
+    pub batch_size: usize,
+    pub by_segment: bool,
+    pub precompute_refs: bool,
+    pub start_nonce: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GPUAvailability {
     pub available: bool,

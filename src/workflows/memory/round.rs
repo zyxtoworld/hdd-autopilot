@@ -9,10 +9,12 @@ use crate::model::{
 };
 use crate::solver::memory::MemorySolver;
 use crate::ui;
+use crate::workflows::common::{
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
+    with_auth_retry_api_until_success,
+};
 
-use super::auth::with_auth_retry_api;
 use super::types::{MemoryDifficultySummary, MemoryRoundSummary, MemorySnapshot, RoundProgress};
-use super::{AccountRuntime, BatchState, current_unix_ms};
 
 pub(super) fn difficulty_order(config: &MemoryConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -45,10 +47,7 @@ pub(super) fn is_pending_session(session: &MemorySession) -> bool {
 }
 
 pub(super) fn started_today(started_at_ms: i64, server_now_ms: i64) -> bool {
-    if started_at_ms <= 0 || server_now_ms <= 0 {
-        return false;
-    }
-    started_at_ms.div_euclid(86_400_000) == server_now_ms.div_euclid(86_400_000)
+    same_beijing_day(started_at_ms, server_now_ms)
 }
 
 pub(super) fn used_today_by_difficulty(history: &MemoryHistoryResponse) -> HashMap<String, i32> {
@@ -132,7 +131,7 @@ pub(super) fn play_round(
             ));
         };
 
-        match flip_once(state, runtime, snapshot.session_id, index) {
+        match flip_once(cancel_flag, state, runtime, snapshot.session_id, index) {
             Ok(step) => {
                 if !step.ok {
                     consecutive_fail += 1;
@@ -181,15 +180,19 @@ pub(super) fn play_round(
 }
 
 fn flip_once(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     session_id: i32,
     index: i32,
 ) -> io::Result<MemoryFlipResponse> {
-    with_auth_retry_api(state, runtime, |client, auth_token| {
-        client.flip_memory(auth_token, session_id, index)
-    })
-    .map_err(|error| io::Error::other(error.to_string()))
+    with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "memory flip",
+        |client, auth_token| client.flip_memory(auth_token, session_id, index),
+    )
 }
 
 fn remember_flip_response(solver: &mut MemorySolver, response: &MemoryFlipResponse) {
@@ -253,7 +256,7 @@ pub(super) fn merge_round_into_summary(
         || result.pairs > 0 && result.match_count >= result.pairs
     {
         summary.won += 1;
-    } else {
+    } else if !is_pending_round_status(&result.status) {
         summary.failed += 1;
     }
 }
@@ -501,5 +504,21 @@ mod tests {
 
         assert_eq!(snapshot.match_count, 1);
         assert_eq!(snapshot.matched_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn pending_status_is_ignored_not_failed() {
+        let mut summary = MemoryDifficultySummary::default();
+        let result = MemoryRoundSummary {
+            status: "pending".to_string(),
+            pairs: 6,
+            match_count: 3,
+            ..MemoryRoundSummary::default()
+        };
+
+        merge_round_into_summary(&mut summary, &result);
+
+        assert_eq!(summary.won, 0);
+        assert_eq!(summary.failed, 0);
     }
 }

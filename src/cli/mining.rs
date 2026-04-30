@@ -28,26 +28,14 @@ pub(super) fn show_mining_menu() -> bool {
             return false;
         };
         match choice.as_str() {
-            "1" => {
-                if show_mining_runtime_menu(Mode::InviteThenBalance) {
-                    return true;
-                }
-            }
-            "2" => {
-                if show_mining_runtime_menu(Mode::BalanceThenInvite) {
-                    return true;
-                }
-            }
-            "3" => {
-                if show_mining_runtime_menu(Mode::InviteOnly) {
-                    return true;
-                }
-            }
-            "4" => {
-                if show_mining_runtime_menu(Mode::BalanceOnly) {
-                    return true;
-                }
-            }
+            "1" if show_mining_runtime_menu(Mode::InviteThenBalance) => return true,
+            "1" => {}
+            "2" if show_mining_runtime_menu(Mode::BalanceThenInvite) => return true,
+            "2" => {}
+            "3" if show_mining_runtime_menu(Mode::InviteOnly) => return true,
+            "3" => {}
+            "4" if show_mining_runtime_menu(Mode::BalanceOnly) => return true,
+            "4" => {}
             "5" => return false,
             "6" => return true,
             _ => {}

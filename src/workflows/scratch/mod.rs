@@ -5,7 +5,7 @@ mod round;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crate::api::ApiClient;
 use crate::model::{AuthCache, AuthConfig};
@@ -16,7 +16,7 @@ use crate::ui;
 use self::auth::ensure_authenticated;
 use self::round::{RoundLoop, run_one_round, settle_pending_rounds};
 
-pub const DONE_MESSAGE: &str = "自动随机刮刮乐处理完成。";
+pub const DONE_MESSAGE: &str = "自动随机刮刮乐已完成。";
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
@@ -109,7 +109,7 @@ pub fn run_batch(config: AuthConfig, auth_cache_file: impl AsRef<Path>) -> io::R
                         log.line_fmt(format_args!("自动随机刮刮乐线程提前结束：{}", error));
                     }
                     Err(_) => {
-                        log.line("自动随机刮刮乐线程提前结束：后台线程发生了未处理异常。");
+                        log.line("自动随机刮刮乐任务异常退出，请查看前面的账号日志定位原因。");
                     }
                 }
             }
@@ -191,11 +191,4 @@ fn run_account_until_complete(
             RoundLoop::Error(error) => return Err(error),
         }
     }
-}
-
-fn current_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }

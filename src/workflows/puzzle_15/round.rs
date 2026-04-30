@@ -9,12 +9,14 @@ use crate::model::{
 };
 use crate::solver::puzzle_15;
 use crate::ui;
+use crate::workflows::common::{
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
+    with_auth_retry_api_until_success,
+};
 
-use super::auth::with_auth_retry_api;
 use super::types::{
     Puzzle15DifficultySummary, Puzzle15RoundSummary, Puzzle15Snapshot, RoundProgress,
 };
-use super::{AccountRuntime, BatchState, current_unix_ms};
 
 pub(super) fn difficulty_order(config: &Puzzle15ConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -44,10 +46,7 @@ pub(super) fn is_pending_session(session: &Puzzle15Session) -> bool {
 }
 
 pub(super) fn started_today(started_at_ms: i64, server_now_ms: i64) -> bool {
-    if started_at_ms <= 0 || server_now_ms <= 0 {
-        return false;
-    }
-    started_at_ms.div_euclid(86_400_000) == server_now_ms.div_euclid(86_400_000)
+    same_beijing_day(started_at_ms, server_now_ms)
 }
 
 pub(super) fn used_today_by_difficulty(history: &Puzzle15HistoryResponse) -> HashMap<String, i32> {
@@ -107,7 +106,13 @@ pub(super) fn play_round(
 
     for direction in path {
         ui::check_cancel(cancel_flag)?;
-        let step = move_once(state, runtime, snapshot.session_id, direction.as_api_str())?;
+        let step = move_once(
+            cancel_flag,
+            state,
+            runtime,
+            snapshot.session_id,
+            direction.as_api_str(),
+        )?;
         if !step.ok {
             return Ok(build_round_summary(
                 runtime.email(),
@@ -120,6 +125,9 @@ pub(super) fn play_round(
             ));
         }
         snapshot = snapshot_from_move_response(&snapshot, &step);
+        if is_finished(&snapshot) {
+            break;
+        }
     }
 
     Ok(build_round_summary(
@@ -134,15 +142,19 @@ pub(super) fn play_round(
 }
 
 fn move_once(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     session_id: i32,
     direction: &str,
 ) -> io::Result<Puzzle15MoveResponse> {
-    with_auth_retry_api(state, runtime, |client, auth_token| {
-        client.move_puzzle_15(auth_token, session_id, direction)
-    })
-    .map_err(|error| io::Error::other(error.to_string()))
+    with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle15 move",
+        |client, auth_token| client.move_puzzle_15(auth_token, session_id, direction),
+    )
 }
 
 pub(super) fn snapshot_from_start_response(start: &Puzzle15StartResponse) -> Puzzle15Snapshot {
@@ -227,7 +239,7 @@ pub(super) fn merge_round_into_summary(
     }
     if result.status.trim().eq_ignore_ascii_case("won") {
         summary.won += 1;
-    } else {
+    } else if !is_pending_round_status(&result.status) {
         summary.failed += 1;
     }
 }
@@ -268,6 +280,14 @@ fn status_for_snapshot(snapshot: &Puzzle15Snapshot) -> String {
     } else {
         snapshot.status.clone()
     }
+}
+
+fn is_finished(snapshot: &Puzzle15Snapshot) -> bool {
+    snapshot.won
+        || matches!(
+            snapshot.status.trim().to_ascii_lowercase().as_str(),
+            "won" | "lost" | "failed" | "game_over" | "abandoned"
+        )
 }
 
 fn prefer_i32(value: i32, fallback: i32) -> i32 {
@@ -364,5 +384,37 @@ mod tests {
         };
 
         assert_eq!(used_today_by_difficulty(&history)["easy"], 1);
+    }
+
+    #[test]
+    fn lost_status_is_terminal_and_counted_failed() {
+        let snapshot = Puzzle15Snapshot {
+            status: "lost".to_string(),
+            ..Puzzle15Snapshot::default()
+        };
+        let mut summary = Puzzle15DifficultySummary::default();
+        let result = Puzzle15RoundSummary {
+            status: status_for_snapshot(&snapshot),
+            ..Puzzle15RoundSummary::default()
+        };
+
+        assert!(is_finished(&snapshot));
+        merge_round_into_summary(&mut summary, &result);
+        assert_eq!(summary.won, 0);
+        assert_eq!(summary.failed, 1);
+    }
+
+    #[test]
+    fn pending_status_is_ignored_not_failed() {
+        let mut summary = Puzzle15DifficultySummary::default();
+        let result = Puzzle15RoundSummary {
+            status: "pending".to_string(),
+            ..Puzzle15RoundSummary::default()
+        };
+
+        merge_round_into_summary(&mut summary, &result);
+
+        assert_eq!(summary.won, 0);
+        assert_eq!(summary.failed, 0);
     }
 }

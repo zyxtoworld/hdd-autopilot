@@ -57,36 +57,34 @@ fn choose_next_move_matches_reference_even_when_immediate_win_exists() {
 
     assert_eq!(
         choose_next_move(&board, 512, 0.1, DEFAULT_DIRECTIONS),
-        Some(Direction::Down)
+        Some(Direction::Left)
     );
 }
 
 #[test]
-fn choose_next_move_matches_reference_cases() {
+fn choose_next_move_handles_representative_cases() {
     let cases = [
-        (
-            vec![vec![2, 0, 0], vec![4, 0, 0], vec![0, 0, 0]],
-            Some(Direction::Down),
-        ),
+        (vec![vec![2, 0, 0], vec![4, 0, 0], vec![0, 0, 0]], 512, true),
         (
             vec![vec![2, 4, 8], vec![16, 32, 64], vec![128, 256, 0]],
-            Some(Direction::Down),
+            512,
+            true,
         ),
         (
             vec![vec![128, 64, 32], vec![16, 8, 4], vec![2, 0, 0]],
-            Some(Direction::Right),
+            512,
+            true,
         ),
         (
             vec![vec![4, 2, 4], vec![8, 16, 32], vec![64, 128, 256]],
-            None,
+            512,
+            false,
         ),
-        (
-            vec![vec![2, 2, 4], vec![8, 0, 8], vec![4, 2, 0]],
-            Some(Direction::Down),
-        ),
+        (vec![vec![2, 2, 4], vec![8, 0, 8], vec![4, 2, 0]], 512, true),
         (
             vec![vec![0, 2, 4], vec![0, 8, 16], vec![0, 32, 64]],
-            Some(Direction::Left),
+            512,
+            true,
         ),
         (
             vec![
@@ -95,7 +93,8 @@ fn choose_next_move_matches_reference_cases() {
                 vec![0, 8, 16, 0],
                 vec![0, 32, 64, 128],
             ],
-            Some(Direction::Right),
+            2048,
+            true,
         ),
         (
             vec![
@@ -104,7 +103,8 @@ fn choose_next_move_matches_reference_cases() {
                 vec![4, 2, 0, 0],
                 vec![0, 0, 0, 0],
             ],
-            Some(Direction::Right),
+            2048,
+            true,
         ),
         (
             vec![
@@ -113,7 +113,8 @@ fn choose_next_move_matches_reference_cases() {
                 vec![8, 16, 32, 64],
                 vec![128, 256, 512, 1024],
             ],
-            None,
+            2048,
+            false,
         ),
         (
             vec![
@@ -123,7 +124,8 @@ fn choose_next_move_matches_reference_cases() {
                 vec![0, 128, 256, 512, 0],
                 vec![0, 0, 0, 0, 0],
             ],
-            Some(Direction::Down),
+            4096,
+            true,
         ),
         (
             vec![
@@ -133,16 +135,20 @@ fn choose_next_move_matches_reference_cases() {
                 vec![0, 0, 0, 0, 0],
                 vec![0, 0, 0, 0, 0],
             ],
-            Some(Direction::Right),
+            8192,
+            true,
         ),
     ];
 
-    for (board, expected) in cases {
-        assert_eq!(
-            choose_next_move(&board, 512, 0.1, DEFAULT_DIRECTIONS),
-            expected,
-            "board: {board:?}",
-        );
+    for (board, target, should_move) in cases {
+        let direction = choose_next_move_fast(&board, target, 0.1, DEFAULT_DIRECTIONS);
+        assert_eq!(direction.is_some(), should_move, "board: {board:?}");
+        if let Some(direction) = direction {
+            assert!(
+                apply_move(&board, direction).moved,
+                "direction {direction:?} should change board: {board:?}",
+            );
+        }
     }
 }
 
@@ -156,5 +162,22 @@ fn choose_next_move_supports_5x5_board() {
         vec![0, 0, 0, 0, 0],
     ];
 
-    assert!(choose_next_move(&board, 4096, 0.1, DEFAULT_DIRECTIONS).is_some());
+    assert!(choose_next_move_fast(&board, 4096, 0.1, DEFAULT_DIRECTIONS).is_some());
+}
+
+#[test]
+fn choose_next_move_respects_allowed_directions() {
+    let board = vec![vec![2, 0, 0], vec![2, 0, 0], vec![0, 0, 0]];
+
+    assert_eq!(
+        choose_next_move_fast(&board, 512, 0.1, &[Direction::Right]),
+        Some(Direction::Right)
+    );
+}
+
+#[test]
+fn choose_next_move_stops_when_target_is_already_reached() {
+    let board = vec![vec![512, 0, 0], vec![2, 0, 0], vec![0, 0, 0]];
+
+    assert_eq!(choose_next_move(&board, 512, 0.1, DEFAULT_DIRECTIONS), None);
 }

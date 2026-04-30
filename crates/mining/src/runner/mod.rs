@@ -10,7 +10,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::backend::cpu::CpuMiningSession;
-use crate::backend::types::{MineBlockResult, MineResult};
+use crate::backend::types::{
+    CpuMiningSessionConfig, GpuMiningSessionConfig, MineBlockResult, MineResult,
+};
 use crate::backend::{
     BackendKind, ComputeJob, CpuBackend, CudaBackend, MetalBackend, OpenclBackend,
     assign_nonce_ranges,
@@ -69,6 +71,15 @@ impl BackendSession {
             Self::Opencl(session) => session.mine_until_stop(),
         }
     }
+}
+
+fn join_candidate_thread(
+    label: &str,
+    handle: thread::JoinHandle<Result<Vec<SelectedBackend>, MiningError>>,
+) -> Result<Vec<SelectedBackend>, MiningError> {
+    handle
+        .join()
+        .map_err(|_| MiningError::Message(format!("{label} 自动调优线程异常退出。")))?
 }
 
 impl Runner {
@@ -160,28 +171,43 @@ impl Runner {
             return Ok(self.filter_blacklisted(cached));
         }
 
-        let mut candidates = Vec::new();
-        if include_cpu {
-            let cpu_best = self
-                .cpu_backend
-                .find_best_benchmark_config_with_cancel_and_output(
-                    job,
-                    self.config.thread_count,
-                    &self.cancel,
-                    &self.config.output,
-                )?;
-            self.log(format_args!(
-                "CPU 候选可用：线程数 {}，并发数 {}，预计速度约 {:.2} 次/秒。",
-                cpu_best.workers, cpu_best.concurrency, cpu_best.attempts_per_s
-            ));
-            candidates.push(SelectedBackend::new(
-                self.cpu_backend.descriptor(),
-                cpu_best,
-            ));
+        let candidates = if include_cpu {
+            self.log_line("CPU 和 GPU 自动调优并行启动。");
+            let cpu_runner = self.clone();
+            let cpu_job = job.clone();
+            let cpu_handle = thread::spawn(move || {
+                let cpu_best = cpu_runner
+                    .cpu_backend
+                    .find_best_benchmark_config_with_cancel_and_output(
+                        &cpu_job,
+                        cpu_runner.config.thread_count,
+                        &cpu_runner.cancel,
+                        &cpu_runner.config.output,
+                    )?;
+                cpu_runner.log(format_args!(
+                    "CPU 候选可用：线程数 {}，并发数 {}，预计速度约 {:.2} 次/秒。",
+                    cpu_best.workers, cpu_best.concurrency, cpu_best.attempts_per_s
+                ));
+                Ok(vec![SelectedBackend::new(
+                    cpu_runner.cpu_backend.descriptor(),
+                    cpu_best,
+                )])
+            });
+
+            let gpu_runner = self.clone();
+            let gpu_job = job.clone();
+            let gpu_handle =
+                thread::spawn(move || gpu_runner.collect_gpu_backend_candidates(&gpu_job));
+
+            let cpu_candidates = join_candidate_thread("CPU", cpu_handle);
+            let gpu_candidates = join_candidate_thread("GPU", gpu_handle);
+            let mut candidates = cpu_candidates?;
+            candidates.extend(gpu_candidates?);
+            candidates
         } else {
             self.log_line("当前模式不启用 CPU 候选。");
-        }
-        candidates.extend(self.collect_gpu_backend_candidates(job)?);
+            self.collect_gpu_backend_candidates(job)?
+        };
 
         self.benchmark_cache
             .lock()
@@ -246,18 +272,20 @@ impl Runner {
                 Ok(BackendSession::Cpu(
                     self.cpu_backend.start_mining_session(
                         job,
-                        backend
-                            .profile
-                            .workers
-                            .max(1)
-                            .min(self.config.thread_count.max(1)),
-                        backend
-                            .profile
-                            .concurrency
-                            .max(1)
-                            .min(self.config.thread_count.max(1)),
-                        start_nonce,
-                        nonce_count,
+                        CpuMiningSessionConfig {
+                            workers: backend
+                                .profile
+                                .workers
+                                .max(1)
+                                .min(self.config.thread_count.max(1)),
+                            concurrency: backend
+                                .profile
+                                .concurrency
+                                .max(1)
+                                .min(self.config.thread_count.max(1)),
+                            start_nonce,
+                            nonce_count,
+                        },
                         stop_mining,
                         &self.cancel,
                     )?,
@@ -265,36 +293,42 @@ impl Runner {
             }
             BackendKind::Cuda => Ok(BackendSession::Cuda(
                 self.cuda_backend.start_mining_session(
-                    backend.device_index.unwrap_or(0),
                     job,
-                    backend.profile.concurrency.max(1),
-                    backend.profile.by_segment,
-                    backend.profile.precompute_refs,
-                    start_nonce,
+                    GpuMiningSessionConfig {
+                        device_index: backend.device_index.unwrap_or(0),
+                        batch_size: backend.profile.concurrency.max(1),
+                        by_segment: backend.profile.by_segment,
+                        precompute_refs: backend.profile.precompute_refs,
+                        start_nonce,
+                    },
                     stop_mining,
                     &self.cancel,
                 )?,
             )),
             BackendKind::Metal => Ok(BackendSession::Metal(
                 self.metal_backend.start_mining_session(
-                    backend.device_index.unwrap_or(0),
                     job,
-                    backend.profile.concurrency.max(1),
-                    backend.profile.by_segment,
-                    backend.profile.precompute_refs,
-                    start_nonce,
+                    GpuMiningSessionConfig {
+                        device_index: backend.device_index.unwrap_or(0),
+                        batch_size: backend.profile.concurrency.max(1),
+                        by_segment: backend.profile.by_segment,
+                        precompute_refs: backend.profile.precompute_refs,
+                        start_nonce,
+                    },
                     stop_mining,
                     &self.cancel,
                 )?,
             )),
             BackendKind::Opencl => Ok(BackendSession::Opencl(
                 self.opencl_backend.start_mining_session(
-                    backend.device_index.unwrap_or(0),
                     job,
-                    backend.profile.concurrency.max(1),
-                    backend.profile.by_segment,
-                    backend.profile.precompute_refs,
-                    start_nonce,
+                    GpuMiningSessionConfig {
+                        device_index: backend.device_index.unwrap_or(0),
+                        batch_size: backend.profile.concurrency.max(1),
+                        by_segment: backend.profile.by_segment,
+                        precompute_refs: backend.profile.precompute_refs,
+                        start_nonce,
+                    },
                     stop_mining,
                     &self.cancel,
                 )?,
@@ -358,7 +392,7 @@ impl Runner {
         let ranges = assign_nonce_ranges(workers.len())?;
         let (sender, receiver) = mpsc::channel();
         let mut handles = Vec::new();
-        for (worker, (start_nonce, nonce_count)) in workers.iter().zip(ranges.into_iter()) {
+        for (worker, (start_nonce, nonce_count)) in workers.iter().zip(ranges) {
             self.run_backend_self_test(worker, job)?;
             self.log(format_args!(
                 "启动 {} 持久计算会话：nonce 起点 {}，区间长度 {}。",
@@ -382,12 +416,12 @@ impl Runner {
             match receiver.recv() {
                 Ok(WorkerMessage::Result { backend, result }) => {
                     completed += 1;
-                    if best_result.is_none() {
-                        if let Some(result) = result {
-                            self.log(format_args!("{} 后端率先命中。", backend));
-                            best_result = Some(result);
-                            stop_mining.store(true, Ordering::SeqCst);
-                        }
+                    if best_result.is_none()
+                        && let Some(result) = result
+                    {
+                        self.log(format_args!("{} 后端率先命中。", backend));
+                        best_result = Some(result);
+                        stop_mining.store(true, Ordering::SeqCst);
                     }
                 }
                 Ok(WorkerMessage::Error { backend, error }) => {

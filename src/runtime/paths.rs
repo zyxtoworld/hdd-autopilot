@@ -25,10 +25,10 @@ pub fn migrate_legacy_data_file(name: impl AsRef<Path>) {
     if source == destination || !source.is_file() || destination.exists() {
         return;
     }
-    if let Some(parent) = destination.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = destination.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let _ = fs::rename(&source, &destination).or_else(|_| {
         fs::copy(&source, &destination)?;
@@ -90,15 +90,15 @@ pub fn resolve_packaged_file_path_with_sources(
         return existing.clone();
     }
 
-    if let Some(dir) = executable_dir {
-        if executable_root.is_none() || !is_build_output_dir(dir, executable_root.as_deref()) {
-            return dir.join(name);
-        }
+    if let Some(dir) = executable_dir
+        && (executable_root.is_none() || !is_build_output_dir(dir, executable_root.as_deref()))
+    {
+        return dir.join(name);
     }
-    if working_root.is_none() {
-        if let Some(dir) = working_dir.as_deref() {
-            return dir.join(name);
-        }
+    if working_root.is_none()
+        && let Some(dir) = working_dir.as_deref()
+    {
+        return dir.join(name);
     }
     if let Some(root) = working_root {
         return root.join(DIST_DIR_NAME).join(name);

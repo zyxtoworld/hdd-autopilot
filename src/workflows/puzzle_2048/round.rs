@@ -9,10 +9,12 @@ use crate::model::{
 };
 use crate::solver::puzzle_2048::{self, DEFAULT_DIRECTIONS, Direction};
 use crate::ui;
+use crate::workflows::common::{
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
+    with_auth_retry_api_until_success,
+};
 
-use super::auth::with_auth_retry_api;
 use super::types::{PuzzleDifficultySummary, PuzzleRoundSummary, PuzzleSnapshot, RoundProgress};
-use super::{AccountRuntime, BatchState, current_unix_ms};
 
 pub(super) fn difficulty_order(config: &Puzzle2048ConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -55,10 +57,7 @@ pub(super) fn is_pending_item(item: &Puzzle2048HistoryItem) -> bool {
 }
 
 pub(super) fn started_today(started_at_ms: i64, server_now_ms: i64) -> bool {
-    if started_at_ms <= 0 || server_now_ms <= 0 {
-        return false;
-    }
-    started_at_ms.div_euclid(86_400_000) == server_now_ms.div_euclid(86_400_000)
+    same_beijing_day(started_at_ms, server_now_ms)
 }
 
 pub(super) fn used_today_by_difficulty(
@@ -105,51 +104,37 @@ pub(super) fn play_round(
                 String::new(),
             ));
         }
-        if snapshot.move_count >= max_steps_for_size(snapshot.size) {
-            return finalize_round(
-                cancel_flag,
-                state,
-                runtime,
-                &snapshot,
-                continued,
-                &progress,
-                started,
-                "max_steps",
-            );
-        }
-        let Some(direction) = puzzle_2048::choose_next_move(
+        let direction = puzzle_2048::choose_next_move(
             &snapshot.board,
             snapshot.target_tile,
             four_ratio,
             &directions,
-        ) else {
-            return finalize_round(
-                cancel_flag,
-                state,
-                runtime,
-                &snapshot,
-                continued,
-                &progress,
-                started,
-                "deadlock",
-            );
-        };
-        let valid_dirs = puzzle_2048::legal_moves(&snapshot.board, puzzle_2048::DEFAULT_DIRECTIONS);
-        let response = move_once(state, runtime, snapshot.session_id, direction);
+        )
+        .unwrap_or_else(|| directions.first().copied().unwrap_or(Direction::Up));
+        let valid_dirs = puzzle_2048::legal_moves(&snapshot.board, &directions);
+        let response = move_once(cancel_flag, state, runtime, snapshot.session_id, direction);
         match response {
             Ok(step) => {
                 if !step.ok {
-                    consecutive_fail += 1;
-                    if consecutive_fail >= 3 {
-                        return finalize_round(
-                            cancel_flag,
-                            state,
-                            runtime,
-                            &snapshot,
+                    let next_snapshot = snapshot_from_move_response(&snapshot, &step);
+                    if is_finished(&next_snapshot) {
+                        return Ok(build_round_summary(
+                            runtime.email(),
+                            &next_snapshot,
                             continued,
                             &progress,
                             started,
-                            "wedged",
+                            step.reward_amount,
+                            String::new(),
+                        ));
+                    }
+                    consecutive_fail += 1;
+                    if consecutive_fail >= 3 {
+                        return fail_round_without_abandon(
+                            cancel_flag,
+                            runtime,
+                            &snapshot,
+                            RoundFailure::new(continued, &progress, started, "stuck"),
                         );
                     }
                     continue;
@@ -167,18 +152,32 @@ pub(super) fn play_round(
                     ));
                     let alt = valid_dirs.into_iter().find(|item| *item != direction);
                     if let Some(alt) = alt {
-                        match move_once(state, runtime, snapshot.session_id, alt) {
+                        match move_once(cancel_flag, state, runtime, snapshot.session_id, alt) {
                             Ok(alt_step) => {
                                 if !alt_step.ok {
-                                    return finalize_round(
+                                    let next_snapshot =
+                                        snapshot_from_move_response(&snapshot, &alt_step);
+                                    if is_finished(&next_snapshot) {
+                                        return Ok(build_round_summary(
+                                            runtime.email(),
+                                            &next_snapshot,
+                                            continued,
+                                            &progress,
+                                            started,
+                                            alt_step.reward_amount,
+                                            String::new(),
+                                        ));
+                                    }
+                                    return fail_round_without_abandon(
                                         cancel_flag,
-                                        state,
                                         runtime,
                                         &snapshot,
-                                        continued,
-                                        &progress,
-                                        started,
-                                        "sim_drift",
+                                        RoundFailure::new(
+                                            continued,
+                                            &progress,
+                                            started,
+                                            "sim_drift",
+                                        ),
                                     );
                                 }
                                 last_reward = alt_step.reward_amount;
@@ -190,28 +189,25 @@ pub(super) fn play_round(
                                 if consecutive_fail < 3 {
                                     continue;
                                 }
-                                return finalize_round(
+                                return fail_round_without_abandon(
                                     cancel_flag,
-                                    state,
                                     runtime,
                                     &snapshot,
-                                    continued,
-                                    &progress,
-                                    started,
-                                    &format!("wedged: {}", error),
+                                    RoundFailure::new(
+                                        continued,
+                                        &progress,
+                                        started,
+                                        &format!("stuck: {}", error),
+                                    ),
                                 );
                             }
                         }
                     }
-                    return finalize_round(
+                    return fail_round_without_abandon(
                         cancel_flag,
-                        state,
                         runtime,
                         &snapshot,
-                        continued,
-                        &progress,
-                        started,
-                        "sim_drift",
+                        RoundFailure::new(continued, &progress, started, "sim_drift"),
                     );
                 }
             }
@@ -229,15 +225,16 @@ pub(super) fn play_round(
                 }
                 consecutive_fail += 1;
                 if consecutive_fail >= 3 {
-                    return finalize_round(
+                    return fail_round_without_abandon(
                         cancel_flag,
-                        state,
                         runtime,
                         &snapshot,
-                        continued,
-                        &progress,
-                        started,
-                        &format!("wedged: {}", error),
+                        RoundFailure::new(
+                            continued,
+                            &progress,
+                            started,
+                            &format!("stuck: {}", error),
+                        ),
                     );
                 }
                 continue;
@@ -247,62 +244,76 @@ pub(super) fn play_round(
 }
 
 fn move_once(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     session_id: i32,
     direction: Direction,
 ) -> io::Result<Puzzle2048MoveResponse> {
-    with_auth_retry_api(state, runtime, |client, auth_token| {
-        client.move_puzzle_2048(auth_token, session_id, direction.as_api_str())
-    })
-    .map_err(|error| io::Error::other(error.to_string()))
+    with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle2048 move",
+        |client, auth_token| {
+            client.move_puzzle_2048(auth_token, session_id, direction.as_api_str())
+        },
+    )
 }
 
-fn finalize_round(
-    cancel_flag: &ui::CancelFlag,
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
-    snapshot: &PuzzleSnapshot,
+struct RoundFailure<'a> {
     continued: bool,
-    progress: &RoundProgress,
+    progress: &'a RoundProgress,
     started: Instant,
-    tag: &str,
-) -> io::Result<PuzzleRoundSummary> {
-    ui::check_cancel(cancel_flag)?;
-    let response = with_auth_retry_api(state, runtime, |client, auth_token| {
-        client.abandon_puzzle_2048(auth_token, snapshot.session_id)
-    });
-    match response {
-        Ok(step) => {
-            let final_snapshot = if step.ok || step.won {
-                snapshot_from_move_response(snapshot, &step)
-            } else {
-                snapshot.clone()
-            };
-            let error_message = if final_snapshot.won {
-                String::new()
-            } else {
-                tag.to_string()
-            };
-            Ok(build_round_summary(
-                runtime.email(),
-                &final_snapshot,
-                continued,
-                progress,
-                started,
-                step.reward_amount,
-                error_message,
-            ))
-        }
-        Err(error) => Ok(build_round_summary(
-            runtime.email(),
-            snapshot,
+    tag: &'a str,
+}
+
+impl<'a> RoundFailure<'a> {
+    fn new(continued: bool, progress: &'a RoundProgress, started: Instant, tag: &'a str) -> Self {
+        Self {
             continued,
             progress,
             started,
-            0.0,
-            format!("{}: {}", tag, error),
-        )),
+            tag,
+        }
+    }
+}
+
+fn fail_round_without_abandon(
+    cancel_flag: &ui::CancelFlag,
+    runtime: &mut AccountRuntime,
+    snapshot: &PuzzleSnapshot,
+    failure: RoundFailure<'_>,
+) -> io::Result<PuzzleRoundSummary> {
+    ui::check_cancel(cancel_flag)?;
+    let mut failed_snapshot = snapshot.clone();
+    if is_pending_round_status(&failed_snapshot.status) {
+        failed_snapshot.status = "failed".to_string();
+    }
+    failed_snapshot.game_over = true;
+    Ok(build_round_summary(
+        runtime.email(),
+        &failed_snapshot,
+        failure.continued,
+        failure.progress,
+        failure.started,
+        0.0,
+        user_facing_round_failure_reason(failure.tag),
+    ))
+}
+
+fn user_facing_round_failure_reason(tag: &str) -> String {
+    if let Some(detail) = tag.strip_prefix("stuck:") {
+        let detail = detail.trim();
+        if detail.is_empty() {
+            return "连续多次移动请求失败，这局按失败记录。".to_string();
+        }
+        return format!("连续多次移动请求失败，这局按失败记录：{}", detail);
+    }
+    match tag {
+        "stuck" => "连续多次移动请求失败，这局按失败记录。".to_string(),
+        "sim_drift" => "服务端棋盘和本地判断不一致，这局按失败记录。".to_string(),
+        _ => tag.to_string(),
     }
 }
 
@@ -355,7 +366,7 @@ pub(super) fn merge_round_into_summary(
         || result.max_tile >= target_for_status(result)
     {
         summary.won += 1;
-    } else {
+    } else if !is_pending_round_status(&result.status) {
         summary.failed += 1;
     }
 }
@@ -374,14 +385,6 @@ pub(super) fn remaining_for_difficulty(
 
 pub(super) fn normalize_round_total(current: i32, total: i32) -> i32 {
     total.max(current.max(1))
-}
-
-fn max_steps_for_size(size: i32) -> i32 {
-    match size {
-        3 => 800,
-        4 => 2000,
-        _ => 4000,
-    }
 }
 
 fn snapshot_from_move_response(
@@ -560,5 +563,21 @@ mod tests {
         };
 
         assert_eq!(used_today_by_difficulty(&history)["mini"], 1);
+    }
+
+    #[test]
+    fn pending_status_is_ignored_not_failed() {
+        let mut summary = PuzzleDifficultySummary::default();
+        let result = PuzzleRoundSummary {
+            status: "pending".to_string(),
+            max_tile: 128,
+            difficulty: crate::model::PUZZLE_2048_DIFFICULTY_MINI.to_string(),
+            ..PuzzleRoundSummary::default()
+        };
+
+        merge_round_into_summary(&mut summary, &result);
+
+        assert_eq!(summary.won, 0);
+        assert_eq!(summary.failed, 0);
     }
 }

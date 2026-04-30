@@ -1,12 +1,12 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 
 use crate::model::{
     SCRATCH_GAME_TYPE_ICON_MATCH, SCRATCH_GAME_TYPE_LUCKY_NUMBERS, SCRATCH_GAME_TYPE_PROGRESS_RUN,
     SCRATCH_GAME_TYPE_THREE_KIND, SCRATCH_GAME_TYPE_TREASURE_CHEST, ScratchRoundResult,
 };
 use crate::ui;
+use crate::workflows::common::append_account_log_line;
 
 pub(super) fn append_scratch_round_log(
     log_dir: &Path,
@@ -15,27 +15,11 @@ pub(super) fn append_scratch_round_log(
     total_cost: f64,
     total_reward: f64,
 ) -> io::Result<()> {
-    let path = scratch_log_file_path(log_dir, email);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(format_scratch_round_log_line(result, total_cost, total_reward).as_bytes())?;
-    file.flush()
-}
-
-fn scratch_log_file_path(log_dir: &Path, email: &str) -> PathBuf {
-    let mut sanitized = String::new();
-    for ch in email.trim().to_ascii_lowercase().chars() {
-        match ch {
-            'a'..='z' | '0'..='9' | '.' | '_' | '-' | '@' => sanitized.push(ch),
-            _ => sanitized.push('_'),
-        }
-    }
-    if sanitized.is_empty() {
-        sanitized = "unknown".to_string();
-    }
-    log_dir.join(sanitized.replace('@', "_at_") + ".log")
+    append_account_log_line(
+        log_dir,
+        email,
+        &format_scratch_round_log_line(result, total_cost, total_reward),
+    )
 }
 
 fn format_scratch_round_log_line(

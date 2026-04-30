@@ -8,18 +8,18 @@ pub use board::{DEFAULT_DIRECTIONS, Direction, MoveOutcome, apply_move, legal_mo
 
 pub fn choose_next_move(
     board: &[Vec<i32>],
-    _target_tile: i32,
-    _four_ratio: f64,
+    target_tile: i32,
+    four_ratio: f64,
     allowed_directions: &[Direction],
 ) -> Option<Direction> {
-    strategy::choose_next_move(board, allowed_directions)
+    strategy::choose_next_move(board, target_tile, four_ratio, allowed_directions)
 }
 
 pub fn choose_next_move_fast(
     board: &[Vec<i32>],
-    _target_tile: i32,
-    _four_ratio: f64,
+    target_tile: i32,
+    four_ratio: f64,
     allowed_directions: &[Direction],
 ) -> Option<Direction> {
-    strategy::choose_next_move(board, allowed_directions)
+    strategy::choose_next_move_fast(board, target_tile, four_ratio, allowed_directions)
 }

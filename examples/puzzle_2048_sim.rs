@@ -12,7 +12,7 @@ use url as _;
 use std::time::Instant;
 
 use hdd::solver::puzzle_2048::{
-    DEFAULT_DIRECTIONS, apply_move, choose_next_move_fast, legal_moves,
+    DEFAULT_DIRECTIONS, apply_move, choose_next_move, choose_next_move_fast, legal_moves,
 };
 
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ fn spawn(board: &mut [Vec<i32>], rng: &mut Rng) -> bool {
     true
 }
 
-fn play(size: usize, target: i32, seed: u64) -> (bool, usize, i32) {
+fn play(size: usize, target: i32, seed: u64, strong: bool) -> (bool, usize, i32, Vec<Vec<i32>>) {
     let mut rng = Rng::new(seed);
     let mut board = vec![vec![0; size]; size];
     spawn(&mut board, &mut rng);
@@ -89,7 +89,12 @@ fn play(size: usize, target: i32, seed: u64) -> (bool, usize, i32) {
         && !legal_moves(&board, DEFAULT_DIRECTIONS).is_empty()
         && moves < max_moves
     {
-        let Some(direction) = choose_next_move_fast(&board, target, 0.1, DEFAULT_DIRECTIONS) else {
+        let direction = if strong {
+            choose_next_move(&board, target, 0.1, DEFAULT_DIRECTIONS)
+        } else {
+            choose_next_move_fast(&board, target, 0.1, DEFAULT_DIRECTIONS)
+        };
+        let Some(direction) = direction else {
             break;
         };
         let outcome = apply_move(&board, direction);
@@ -102,17 +107,18 @@ fn play(size: usize, target: i32, seed: u64) -> (bool, usize, i32) {
             spawn(&mut board, &mut rng);
         }
     }
-    (max_tile(&board) >= target, moves, max_tile(&board))
+    (max_tile(&board) >= target, moves, max_tile(&board), board)
 }
 
-fn run(size: usize, target: i32, trials: usize) {
+fn run(size: usize, target: i32, trials: usize, strong: bool) {
     let started = Instant::now();
     let mut stats = Stats::default();
     for i in 0..trials {
-        let (won, moves, best) = play(
+        let (won, moves, best, board) = play(
             size,
             target,
             0x2048_0000 + (size as u64) * 10_000 + i as u64,
+            strong,
         );
         if won {
             stats.wins += 1;
@@ -129,12 +135,18 @@ fn run(size: usize, target: i32, trials: usize) {
             moves,
             best
         );
+        if std::env::var("PUZZLE_2048_SIM_PRINT_BOARD").is_ok() {
+            for row in &board {
+                println!("  {:?}", row);
+            }
+        }
     }
     println!(
-        "{}x{} target {}: {}/{} = {:.2}% avg_moves={:.1} avg_max={:.1} best={} elapsed={:.2?}",
+        "{}x{} target {} [{}]: {}/{} = {:.2}% avg_moves={:.1} avg_max={:.1} best={} elapsed={:.2?}",
         size,
         size,
         target,
+        if strong { "strong" } else { "fast" },
         stats.wins,
         trials,
         stats.wins as f64 * 100.0 / trials as f64,
@@ -148,10 +160,18 @@ fn run(size: usize, target: i32, trials: usize) {
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let trials = args
-        .get(0)
+        .first()
         .and_then(|value| value.parse().ok())
         .unwrap_or(100);
-    run(3, 512, trials);
-    run(4, 2048, trials);
-    run(5, 4096, trials);
+    let strong = args.iter().any(|value| value == "strong");
+    match args.get(1).map(String::as_str) {
+        Some("3") | Some("3x3") => run(3, 512, trials, strong),
+        Some("4") | Some("4x4") => run(4, 2048, trials, strong),
+        Some("5") | Some("5x5") => run(5, 4096, trials, strong),
+        _ => {
+            run(3, 512, trials, strong);
+            run(4, 2048, trials, strong);
+            run(5, 4096, trials, strong);
+        }
+    }
 }

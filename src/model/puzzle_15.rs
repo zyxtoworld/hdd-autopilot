@@ -77,6 +77,20 @@ pub struct Puzzle15HistoryResponse {
     pub server_now_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Puzzle15MeResponse {
+    #[serde(default)]
+    pub active_session: Option<Puzzle15Session>,
+    #[serde(default)]
+    pub authenticated: bool,
+    #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
+    pub daily_plays_used: HashMap<String, i32>,
+    #[serde(default)]
+    pub server_now_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Puzzle15StartRequest {
     pub difficulty: String,

@@ -2,25 +2,14 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-use chrono::{FixedOffset, TimeZone};
-
 use crate::model::CheckinResult;
+use crate::workflows::common::beijing_time;
 
 pub fn append_checkin_log(log_dir: impl AsRef<Path>, result: &CheckinResult) -> io::Result<()> {
     fs::create_dir_all(log_dir.as_ref())?;
     let path = log_dir.as_ref().join("checkin.log");
     let line = format_checkin_result_line(result);
-    let zone = FixedOffset::east_opt(8 * 60 * 60).unwrap();
-    let when = zone
-        .timestamp_millis_opt(result.when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            chrono::Utc
-                .timestamp_millis_opt(super::current_unix_ms())
-                .single()
-                .unwrap()
-                .with_timezone(&zone)
-        });
+    let when = beijing_time(result.when_unix_ms);
     let entry = format!("[{}] {}\n", when.format("%Y-%m-%d %H:%M:%S"), line);
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(entry.as_bytes())?;

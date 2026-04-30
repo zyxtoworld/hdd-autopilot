@@ -1,4 +1,5 @@
 pub mod checkin;
+pub(crate) mod common;
 pub mod free_play;
 pub mod memory;
 pub mod puzzle_15;

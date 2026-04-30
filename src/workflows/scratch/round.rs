@@ -9,11 +9,12 @@ use crate::model::{
     ScratchPlayResponse, ScratchRoundResult, scratch_reveal_ready_at,
 };
 use crate::ui;
+use crate::workflows::common::current_unix_ms;
 use rand::prelude::IndexedRandom;
 
 use super::auth::with_auth_retry;
 use super::log::{append_scratch_round_log, log_round_result};
-use super::{AccountRuntime, BatchState, RunOptions, current_unix_ms};
+use super::{AccountRuntime, BatchState, RunOptions};
 
 const PLAY_ERROR_BACKOFF: Duration = Duration::from_secs(3);
 const GAME_TYPES: &[&str] = &[
@@ -91,7 +92,7 @@ pub(super) fn settle_pending_rounds(
     log_dir: &Path,
 ) -> io::Result<()> {
     ui::check_cancel(cancel_flag)?;
-    let history = with_auth_retry(state, runtime, |client, auth_token| {
+    let history = with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
         client.get_scratch_history(auth_token)
     })?;
     let pending_items = pending_scratch_history_items(&history.items);
@@ -115,7 +116,7 @@ pub(super) fn settle_pending_rounds(
             ..ScratchRoundResult::default()
         };
 
-        match with_auth_retry(state, runtime, |client, auth_token| {
+        match with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
             client.reveal_scratch(auth_token, item.id, "")
         }) {
             Ok(reveal_resp) => {
@@ -191,7 +192,7 @@ fn run_round(
     };
 
     let game_type = random_scratch_game_type();
-    let play_resp = match with_auth_retry(state, runtime, |client, auth_token| {
+    let play_resp = match with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
         client.play_scratch(auth_token, &game_type)
     }) {
         Ok(play_resp) => play_resp,
@@ -237,7 +238,7 @@ fn run_round(
     }
 
     wait_until_reveal_ready(cancel_flag, runtime, &play_resp)?;
-    let reveal_resp = match with_auth_retry(state, runtime, |client, auth_token| {
+    let reveal_resp = match with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
         client.reveal_scratch(auth_token, play_resp.play_id, &play_resp.reveal_token)
     }) {
         Ok(reveal_resp) => reveal_resp,
@@ -288,7 +289,7 @@ fn fetch_scratch_history_item_with_retry(
     let attempts = attempts.max(1);
     for attempt in 1..=attempts {
         ui::check_cancel(cancel_flag)?;
-        let history = with_auth_retry(state, runtime, |client, auth_token| {
+        let history = with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
             client.get_scratch_history(auth_token)
         })?;
         let item = find_scratch_history_item(&history.items, play_id);

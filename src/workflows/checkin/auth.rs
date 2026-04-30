@@ -129,7 +129,7 @@ pub(super) fn reauthenticate(
     runtime: &mut AccountRuntime,
 ) -> Result<(), ApiError> {
     state.lock().unwrap().log.line_fmt(format_args!(
-        "检测到账号 {} 的登录态失效，尝试重新登录。",
+        "检测到账号 {} 的登录状态失效，尝试重新登录。",
         runtime.email()
     ));
     runtime.auth_token.clear();

@@ -273,7 +273,7 @@ pub(super) fn ordered_tiles_by_id_desc(tiles: &[Tile], forbidden: &HashSet<i32>)
         .filter(|tile| !forbidden.contains(&tile.id))
         .cloned()
         .collect::<Vec<_>>();
-    ordered.sort_by(|left, right| right.id.cmp(&left.id));
+    ordered.sort_by_key(|tile| std::cmp::Reverse(tile.id));
     ordered
 }
 

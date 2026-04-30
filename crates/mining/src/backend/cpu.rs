@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use argon2::{Algorithm, Argon2, Params, Version};
 
 use crate::backend::types::{
-    BackendDescriptor, BackendKind, BenchmarkResult, MineBlockResult, MineResult,
+    BackendDescriptor, BackendKind, BenchmarkResult, CpuMiningSessionConfig, MineBlockResult,
+    MineResult,
 };
 use crate::error::{MiningError, interrupted_error};
 
@@ -358,13 +359,16 @@ impl CpuBackend {
     pub fn start_mining_session(
         &self,
         job: &ComputeJob,
-        workers: usize,
-        concurrency: usize,
-        start_nonce: usize,
-        nonce_count: usize,
+        config: CpuMiningSessionConfig,
         stop: &Arc<AtomicBool>,
         cancel: &Arc<AtomicBool>,
     ) -> Result<CpuMiningSession, MiningError> {
+        let CpuMiningSessionConfig {
+            workers,
+            concurrency,
+            start_nonce,
+            nonce_count,
+        } = config;
         if nonce_count == 0 {
             return Err(MiningError::Message("nonce 范围不能为空。".to_string()));
         }
@@ -458,36 +462,6 @@ fn build_shard_groups(worker_total: usize, concurrency_total: usize) -> Vec<Vec<
     shard_groups
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-
-    use super::*;
-
-    #[test]
-    fn build_shard_groups_distributes_workers_across_concurrency() {
-        let groups = build_shard_groups(5, 2);
-
-        assert_eq!(groups, vec![vec![0, 2, 4], vec![1, 3]]);
-    }
-
-    #[test]
-    fn benchmark_respects_max_threads_limit() {
-        let backend = CpuBackend::new();
-        let cancel = Arc::new(AtomicBool::new(false));
-
-        let result = backend
-            .find_best_benchmark_config_with_cancel(&default_benchmark_job(), 2, &cancel)
-            .expect("benchmark should succeed");
-
-        assert!(result.workers <= 2);
-        assert!(result.concurrency <= 2);
-        assert!(result.workers >= 1);
-        assert!(result.concurrency >= 1);
-    }
-}
-
 fn append_nonce_ascii(buffer: &mut Vec<u8>, mut value: usize) {
     if value == 0 {
         buffer.push(b'0');
@@ -531,4 +505,34 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
         output.push(HEX[(byte & 0x0f) as usize] as char);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    #[test]
+    fn build_shard_groups_distributes_workers_across_concurrency() {
+        let groups = build_shard_groups(5, 2);
+
+        assert_eq!(groups, vec![vec![0, 2, 4], vec![1, 3]]);
+    }
+
+    #[test]
+    fn benchmark_respects_max_threads_limit() {
+        let backend = CpuBackend::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = backend
+            .find_best_benchmark_config_with_cancel(&default_benchmark_job(), 2, &cancel)
+            .expect("benchmark should succeed");
+
+        assert!(result.workers <= 2);
+        assert!(result.concurrency <= 2);
+        assert!(result.workers >= 1);
+        assert!(result.concurrency >= 1);
+    }
 }

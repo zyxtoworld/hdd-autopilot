@@ -101,8 +101,7 @@ impl<'a> Puzzle<'a> {
         let mut cols = vec![0u32; self.size];
         let mut boxes = vec![0u32; self.size];
 
-        for index in 0..board.len() {
-            let value = board[index];
+        for (index, value) in board.iter().copied().enumerate() {
             if value == 0 {
                 continue;
             }
@@ -182,8 +181,8 @@ fn choose_next_cell(
 ) -> Option<(usize, u32)> {
     let mut best = None;
     let mut best_count = u32::MAX;
-    for index in 0..board.len() {
-        if board[index] != 0 {
+    for (index, value) in board.iter().copied().enumerate() {
+        if value != 0 {
             continue;
         }
         let row = index / puzzle.size;

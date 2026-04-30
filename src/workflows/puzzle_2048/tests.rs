@@ -67,19 +67,9 @@ fn difficulty_order_uses_mini_classic_jumbo() {
 }
 
 #[test]
-fn only_wedged_round_errors_stop_difficulty_loop() {
-    assert!(super::should_stop_after_round_error("wedged"));
-    assert!(super::should_stop_after_round_error("wedged: 请求失败"));
-    assert!(!super::should_stop_after_round_error("deadlock"));
-    assert!(!super::should_stop_after_round_error("max_steps"));
-    assert!(!super::should_stop_after_round_error("sim_drift"));
-    assert!(!super::should_stop_after_round_error(""));
-}
-
-#[test]
-fn start_failed_error_breaks_current_difficulty() {
-    assert!(super::is_start_failed_error(
-        "start_failed: 谜题2048开局接口返回 ok=false"
+fn new_round_unavailable_is_interface_state_not_game_result() {
+    assert!(super::is_new_round_unavailable_error(
+        "new_round_unavailable: 谜题2048接口没有返回可玩的新局"
     ));
-    assert!(!super::is_start_failed_error("当前还有未结束对局"));
+    assert!(!super::is_new_round_unavailable_error("当前还有未结束对局"));
 }
