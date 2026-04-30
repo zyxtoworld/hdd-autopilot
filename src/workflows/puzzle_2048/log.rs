@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::ui;
 use crate::workflows::common::{
-    append_account_log_line as append_line, beijing_time, join_log_clauses as join_clauses,
-    reason_clause as format_reason_clause, round_mode_label,
+    append_account_log_line as append_line, beijing_time, format_amount, format_duration_ms,
+    join_log_clauses as join_clauses, reason_clause as format_reason_clause, round_mode_label,
     round_progress_label as format_round_progress,
 };
 
@@ -60,7 +60,7 @@ pub(super) fn append_account_summary(
             ),
             format!("成功 {} 局", total_won),
             format!("失败 {} 局", total_failed),
-            format!("总收益 {:.8}", total_reward),
+            format!("总收益 {}", format_amount(total_reward)),
         ]),
     )
 }
@@ -108,12 +108,12 @@ fn format_round_result_line(result: &PuzzleRoundSummary) -> String {
             result.session_id,
             round_status_label(result)
         ),
-        format!("收益 {:.8}", result.reward),
+        format!("收益 {}", format_amount(result.reward)),
         format!("今天这个难度还剩 {} 次", result.remaining_after),
         format!("这一局走了 {} 步", result.move_count),
         format!("最大数字 {}", result.max_tile),
         format!("分数 {}", result.score),
-        format!("耗时 {}ms", result.duration_ms),
+        format!("耗时 {}", format_duration_ms(result.duration_ms)),
         format_reason_clause(&result.error_message),
     ])
 }
@@ -129,7 +129,7 @@ fn format_difficulty_summary_line(summary: &PuzzleDifficultySummary) -> String {
         ),
         format!("成功 {} 局", summary.won),
         format!("失败 {} 局", summary.failed),
-        format!("总收益 {:.8}", summary.total_reward),
+        format!("总收益 {}", format_amount(summary.total_reward)),
         format!("今天这个难度还剩 {} 次", summary.remaining_after),
         format_reason_clause(&summary.error_message),
     ])
@@ -142,15 +142,15 @@ fn format_runtime_round_result_line(result: &PuzzleRoundSummary) -> String {
         format!("，原因：{}", result.error_message.trim())
     };
     format!(
-        "账号 {} 的谜题2048{}难度{}结果：{}，最大数字 {}，分数 {}，耗时 {}ms，奖励 {:.8}，今天还剩 {} 次，走了 {} 步{}。",
+        "账号 {} 的谜题2048{}难度{}结果：{}，最大数字 {}，分数 {}，耗时 {}，奖励 {}，今天还剩 {} 次，走了 {} 步{}。",
         result.email,
         localized_difficulty(&result.difficulty),
         format_round_progress(result.round_index, result.round_total),
         round_status_label(result),
         result.max_tile,
         result.score,
-        result.duration_ms,
-        result.reward,
+        format_duration_ms(result.duration_ms),
+        format_amount(result.reward),
         result.remaining_after,
         result.move_count,
         reason,

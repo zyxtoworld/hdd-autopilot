@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::ui;
 use crate::workflows::common::{
-    append_account_log_line as append_line, beijing_time, join_log_clauses as join_clauses,
-    reason_clause as format_reason_clause, round_mode_label,
+    append_account_log_line as append_line, beijing_time, format_amount, format_duration_ms,
+    join_log_clauses as join_clauses, reason_clause as format_reason_clause, round_mode_label,
     round_progress_label as format_round_progress,
 };
 
@@ -59,7 +59,7 @@ pub(super) fn append_account_summary(
             ),
             format!("成功 {} 局", total_won),
             format!("失败 {} 局", total_failed),
-            format!("总收益 {:.8}", total_reward),
+            format!("总收益 {}", format_amount(total_reward)),
         ]),
     )
 }
@@ -97,12 +97,12 @@ fn format_round_result_line(result: &Puzzle15RoundSummary) -> String {
             result.session_id,
             round_status_label(result)
         ),
-        format!("收益 {:.8}", result.reward),
+        format!("收益 {}", format_amount(result.reward)),
         format!("今天这个难度还剩 {} 次", result.remaining_after),
         format!("棋盘 {}x{}", result.size, result.size),
         format!("计划 {} 步", result.planned_steps),
         format!("累计移动 {} 步", result.move_count),
-        format!("耗时 {}ms", result.duration_ms),
+        format!("耗时 {}", format_duration_ms(result.duration_ms)),
         format_reason_clause(&result.error_message),
     ])
 }
@@ -118,7 +118,7 @@ fn format_difficulty_summary_line(summary: &Puzzle15DifficultySummary) -> String
         ),
         format!("成功 {} 局", summary.won),
         format!("失败 {} 局", summary.failed),
-        format!("总收益 {:.8}", summary.total_reward),
+        format!("总收益 {}", format_amount(summary.total_reward)),
         format!("今天这个难度还剩 {} 次", summary.remaining_after),
         format_reason_clause(&summary.error_message),
     ])
@@ -131,7 +131,7 @@ fn format_runtime_round_result_line(result: &Puzzle15RoundSummary) -> String {
         format!("，原因：{}", result.error_message.trim())
     };
     format!(
-        "账号 {} 的华容道{}难度{}结果：{}，棋盘 {}x{}，计划 {} 步，累计移动 {} 步，耗时 {}ms，奖励 {:.8}，今天还剩 {} 次{}。",
+        "账号 {} 的华容道{}难度{}结果：{}，棋盘 {}x{}，计划 {} 步，累计移动 {} 步，耗时 {}，奖励 {}，今天还剩 {} 次{}。",
         result.email,
         localized_difficulty(&result.difficulty),
         format_round_progress(result.round_index, result.round_total),
@@ -140,8 +140,8 @@ fn format_runtime_round_result_line(result: &Puzzle15RoundSummary) -> String {
         result.size,
         result.planned_steps,
         result.move_count,
-        result.duration_ms,
-        result.reward,
+        format_duration_ms(result.duration_ms),
+        format_amount(result.reward),
         result.remaining_after,
         reason,
     )

@@ -1,11 +1,15 @@
 use std::io;
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::model::{AuthCache, AuthConfig, CheckinResult};
 use crate::storage::upsert_account;
 use crate::ui;
+use crate::workflows::common::{AccountRewardSummary, print_account_reward_summary};
 use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, sheepmatch, sudoku};
+
+const FEATURE_RETRY_BACKOFF: Duration = Duration::ZERO;
 
 pub(crate) type CheckinRunner = Arc<
     dyn Fn(
@@ -54,32 +58,47 @@ pub(crate) struct FreeFeatureRunners {
 }
 
 fn run_feature_with_status<T, F>(
+    cancel_flag: &ui::CancelFlag,
     log: &ui::TaskLog,
     email: &str,
     feature: &str,
-    action: F,
+    mut action: F,
 ) -> io::Result<T>
 where
-    F: FnOnce() -> io::Result<T>,
+    F: FnMut() -> io::Result<T>,
 {
-    log.line_fmt(format_args!(
-        "【全自动白嫖｜{}｜{}】开始运行。",
-        feature, email
-    ));
-    match action() {
-        Ok(value) => {
+    let mut retry_count = 0usize;
+    loop {
+        ui::check_cancel(cancel_flag)?;
+        if retry_count == 0 {
             log.line_fmt(format_args!(
-                "【全自动白嫖｜{}｜{}】运行完成。",
+                "【全自动白嫖｜{}｜{}】开始运行。",
                 feature, email
             ));
-            Ok(value)
-        }
-        Err(error) => {
+        } else {
             log.line_fmt(format_args!(
-                "【全自动白嫖｜{}｜{}】运行失败：{}",
-                feature, email, error
+                "【全自动白嫖｜{}｜{}】重新进入玩法，继续处理残局和剩余次数（第 {} 次重试）。",
+                feature, email, retry_count
             ));
-            Err(error)
+        }
+
+        match action() {
+            Ok(value) => {
+                log.line_fmt(format_args!(
+                    "【全自动白嫖｜{}｜{}】运行完成。",
+                    feature, email
+                ));
+                return Ok(value);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
+            Err(error) => {
+                retry_count += 1;
+                log.line_fmt(format_args!(
+                    "【全自动白嫖｜{}｜{}】这次没有跑完：{}。不会跳过，会等一下重新进去续残局/剩余次数。",
+                    feature, email, error
+                ));
+                ui::sleep_with_cancel(cancel_flag, FEATURE_RETRY_BACKOFF)?;
+            }
         }
     }
 }
@@ -94,6 +113,8 @@ pub(crate) fn execute_all_free_features(
         Completed {
             checkin_result: Option<CheckinResult>,
             account: AuthCache,
+            reward_summary: AccountRewardSummary,
+            error_message: Option<String>,
         },
     }
 
@@ -118,7 +139,18 @@ pub(crate) fn execute_all_free_features(
     let (result_tx, result_rx) = mpsc::channel::<io::Result<AccountProgress>>();
     let mut handles = Vec::with_capacity(original_config.accounts.len());
 
-    for account in original_config.accounts.clone() {
+    let mut reward_summaries = original_config
+        .accounts
+        .iter()
+        .enumerate()
+        .map(|(index, account)| AccountRewardSummary {
+            index,
+            email: account.email.trim().to_string(),
+            total_reward: 0.0,
+        })
+        .collect::<Vec<_>>();
+
+    for (account_index, account) in original_config.accounts.clone().into_iter().enumerate() {
         ui::check_cancel(cancel_flag)?;
         let cancel_flag = Arc::clone(cancel_flag);
         let base_config = original_config.clone();
@@ -131,7 +163,7 @@ pub(crate) fn execute_all_free_features(
         let result_tx = result_tx.clone();
         let log = log.clone();
         handles.push(std::thread::spawn(move || {
-            let result = (|| -> io::Result<AccountProgress> {
+            let result: io::Result<AccountProgress> = {
                 let account_email = account.email.trim().to_string();
                 log.line_fmt(format_args!(
                     "【全自动白嫖｜账号 {}】开始并发执行：自动签到、自动羊了个羊、自动谜题2048、自动记忆翻牌、自动华容道、自动数独。",
@@ -150,8 +182,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动签到", || {
-                                run_checkin(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动签到", || {
+                                run_checkin(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Checkin)
                             })
                         }
@@ -164,8 +196,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动羊了个羊", || {
-                                run_sheepmatch(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动羊了个羊", || {
+                                run_sheepmatch(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Sheepmatch)
                             })
                         }
@@ -178,8 +210,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动谜题2048", || {
-                                run_puzzle_2048(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动谜题2048", || {
+                                run_puzzle_2048(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Puzzle2048)
                             })
                         }
@@ -192,8 +224,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动记忆翻牌", || {
-                                run_memory(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动记忆翻牌", || {
+                                run_memory(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Memory)
                             })
                         }
@@ -206,8 +238,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动华容道", || {
-                                run_puzzle_15(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动华容道", || {
+                                run_puzzle_15(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Puzzle15)
                             })
                         }
@@ -220,8 +252,8 @@ pub(crate) fn execute_all_free_features(
                         let log = log.clone();
                         let email = account_email.clone();
                         move || {
-                            run_feature_with_status(&log, &email, "自动数独", || {
-                                run_sudoku(&account_config, account, &cancel_flag)
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动数独", || {
+                                run_sudoku(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Sudoku)
                             })
                         }
@@ -231,27 +263,34 @@ pub(crate) fn execute_all_free_features(
                 let mut merged_config = account_config.clone();
                 let mut checkin_result = None;
                 let mut first_error = None;
+                let mut total_reward = 0.0;
                 for handle in feature_handles {
                     match handle.join() {
                         Ok(Ok(progress)) => match progress {
                             FeatureProgress::Checkin(Some(output)) => {
+                                total_reward += output.result.delta;
                                 checkin_result = Some(output.result);
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Checkin(None) => {}
                             FeatureProgress::Sheepmatch(output) => {
+                                total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Puzzle2048(output) => {
+                                total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Memory(output) => {
+                                total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Puzzle15(output) => {
+                                total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Sudoku(output) => {
+                                total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                         },
@@ -270,10 +309,6 @@ pub(crate) fn execute_all_free_features(
                     }
                 }
 
-                if let Some(error) = first_error {
-                    return Err(error);
-                }
-
                 let account = merged_config.accounts.first().cloned().unwrap_or(account);
                 log.line_fmt(format_args!(
                     "【全自动白嫖｜账号 {}】所有白嫖项目都已结束，正在合并最新登录状态。",
@@ -282,8 +317,14 @@ pub(crate) fn execute_all_free_features(
                 Ok(AccountProgress::Completed {
                     checkin_result,
                     account,
+                    reward_summary: AccountRewardSummary {
+                        index: account_index,
+                        email: account_email,
+                        total_reward,
+                    },
+                    error_message: first_error.map(|error| error.to_string()),
                 })
-            })();
+            };
             let _ = result_tx.send(result);
         }));
     }
@@ -297,11 +338,21 @@ pub(crate) fn execute_all_free_features(
             Ok(Ok(AccountProgress::Completed {
                 checkin_result,
                 account,
+                reward_summary,
+                error_message,
             })) => {
                 if let Some(checkin_result) = checkin_result {
                     checkin_results.push(checkin_result);
                 }
+                if let Some(slot) = reward_summaries.get_mut(reward_summary.index) {
+                    *slot = reward_summary;
+                }
                 merged_config = upsert_account(merged_config, account);
+                if let Some(error_message) = error_message
+                    && first_error.is_none()
+                {
+                    first_error = Some(io::Error::other(error_message));
+                }
             }
             Ok(Err(error)) => {
                 if first_error.is_none() {
@@ -327,6 +378,8 @@ pub(crate) fn execute_all_free_features(
         }
     }
 
+    print_account_reward_summary(log, "全自动白嫖", &reward_summaries);
+
     if let Some(error) = first_error {
         return Err(error);
     }
@@ -342,7 +395,7 @@ pub(crate) fn execute_all_free_features(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Condvar, Mutex};
     use std::time::Duration;
 
@@ -389,6 +442,7 @@ mod tests {
                                 email: account.email,
                                 status: "签到成功".to_string(),
                                 success: true,
+                                delta: 1.0,
                                 ..CheckinResult::default()
                             },
                         }))
@@ -407,6 +461,7 @@ mod tests {
                         updated_account.access_token = "after-sheepmatch".to_string();
                         Ok(sheepmatch::AccountRunOutput {
                             account: updated_account,
+                            total_reward: 2.0,
                         })
                     }
                 }),
@@ -424,6 +479,7 @@ mod tests {
                         updated_account.access_token = "after-puzzle_2048-token".to_string();
                         Ok(puzzle_2048::AccountRunOutput {
                             account: updated_account,
+                            total_reward: 3.0,
                         })
                     }
                 }),
@@ -440,6 +496,7 @@ mod tests {
                         updated_account.access_token = "after-memory".to_string();
                         Ok(memory::AccountRunOutput {
                             account: updated_account,
+                            total_reward: 4.0,
                         })
                     }
                 }),
@@ -457,6 +514,7 @@ mod tests {
                         updated_account.access_token = "after-puzzle_15-token".to_string();
                         Ok(puzzle_15::AccountRunOutput {
                             account: updated_account,
+                            total_reward: 5.0,
                         })
                     }
                 }),
@@ -474,6 +532,7 @@ mod tests {
                         updated_account.access_token = "after-sudoku-token".to_string();
                         Ok(sudoku::AccountRunOutput {
                             account: updated_account,
+                            total_reward: 6.0,
                         })
                     }
                 }),
@@ -565,6 +624,7 @@ mod tests {
                                 email: account.email,
                                 status: "签到成功".to_string(),
                                 success: true,
+                                delta: 1.0,
                                 ..CheckinResult::default()
                             },
                         }))
@@ -578,24 +638,108 @@ mod tests {
                             *started.lock().unwrap() = true;
                             ready.notify_all();
                         }
-                        Ok(sheepmatch::AccountRunOutput { account })
+                        Ok(sheepmatch::AccountRunOutput {
+                            account,
+                            total_reward: 2.0,
+                        })
                     }
                 }),
                 run_puzzle_2048: Arc::new(move |_config, account, _cancel_flag| {
-                    Ok(puzzle_2048::AccountRunOutput { account })
+                    Ok(puzzle_2048::AccountRunOutput {
+                        account,
+                        total_reward: 3.0,
+                    })
                 }),
                 run_memory: Arc::new(move |_config, account, _cancel_flag| {
-                    Ok(memory::AccountRunOutput { account })
+                    Ok(memory::AccountRunOutput {
+                        account,
+                        total_reward: 4.0,
+                    })
                 }),
                 run_puzzle_15: Arc::new(move |_config, account, _cancel_flag| {
-                    Ok(puzzle_15::AccountRunOutput { account })
+                    Ok(puzzle_15::AccountRunOutput {
+                        account,
+                        total_reward: 5.0,
+                    })
                 }),
                 run_sudoku: Arc::new(move |_config, account, _cancel_flag| {
-                    Ok(sudoku::AccountRunOutput { account })
+                    Ok(sudoku::AccountRunOutput {
+                        account,
+                        total_reward: 6.0,
+                    })
                 }),
                 save_merged_config: Box::new(|_merged_config| Ok(())),
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn execute_all_free_features_retries_failed_feature_until_success() {
+        let config = sample_config(&["retry@example.com"]);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let sheepmatch_calls = Arc::new(AtomicUsize::new(0));
+        let saved_configs = Arc::new(Mutex::new(Vec::<AuthConfig>::new()));
+
+        let log = ui::TaskLog::stdout();
+        let (results, merged_config) = execute_all_free_features(
+            config,
+            &cancel_flag,
+            &log,
+            FreeFeatureRunners {
+                run_checkin: Arc::new(move |_config, _account, _cancel_flag| Ok(None)),
+                run_sheepmatch: Arc::new({
+                    let sheepmatch_calls = Arc::clone(&sheepmatch_calls);
+                    move |_config, account, _cancel_flag| {
+                        if sheepmatch_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return Err(io::Error::other("temporary sheepmatch error"));
+                        }
+                        Ok(sheepmatch::AccountRunOutput {
+                            account,
+                            total_reward: 2.0,
+                        })
+                    }
+                }),
+                run_puzzle_2048: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(puzzle_2048::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_memory: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(memory::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_puzzle_15: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(puzzle_15::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_sudoku: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(sudoku::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                save_merged_config: Box::new({
+                    let saved_configs = Arc::clone(&saved_configs);
+                    move |merged_config| {
+                        saved_configs.lock().unwrap().push(merged_config);
+                        Ok(())
+                    }
+                }),
+            },
+        )
+        .unwrap();
+
+        assert!(results.is_empty());
+        assert_eq!(sheepmatch_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(merged_config.accounts.len(), 1);
+        let saved_configs = saved_configs.lock().unwrap();
+        assert_eq!(saved_configs.len(), 1);
+        assert_eq!(saved_configs[0], merged_config);
     }
 }

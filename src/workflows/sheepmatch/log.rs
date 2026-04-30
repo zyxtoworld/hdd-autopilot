@@ -4,8 +4,8 @@ use std::path::Path;
 use crate::model::{AccountRunSummary, RoundResultSummary};
 use crate::ui;
 use crate::workflows::common::{
-    append_account_log_line as append_line, beijing_time, join_log_clauses as join_clauses,
-    reason_clause as format_reason_clause, round_mode_label,
+    append_account_log_line as append_line, beijing_time, format_amount, format_duration_ms,
+    join_log_clauses as join_clauses, reason_clause as format_reason_clause, round_mode_label,
 };
 
 pub(super) fn append_run_header(log_dir: &Path, email: &str, when_unix_ms: i64) -> io::Result<()> {
@@ -62,7 +62,7 @@ pub(super) fn append_account_summary(
             format!("成功 {} 局", total_won),
             format!("失败 {} 局", total_failed),
             format!("放弃 {} 局", total_abandoned),
-            format!("总收益 {:.8}", total_reward),
+            format!("总收益 {}", format_amount(total_reward)),
             format_balance_clause(balance_after),
         ]),
     )
@@ -81,12 +81,12 @@ fn format_round_result_line(result: &RoundResultSummary) -> String {
             result.session_id,
             round_status_label(result)
         ),
-        format!("收益 {:.8}", result.reward),
+        format!("收益 {}", format_amount(result.reward)),
         format_balance_clause(result.balance_after),
         format!("今天这个难度还剩 {} 次", result.remaining_after),
         format!("这一局走了 {} 步", result.move_count),
         format_powerups_clause(&result.used_powerups),
-        format!("耗时 {}ms", result.duration_ms),
+        format!("耗时 {}", format_duration_ms(result.duration_ms)),
         format_reason_clause(&result.error_message),
     ])
 }
@@ -103,7 +103,7 @@ fn format_difficulty_summary_line(summary: &AccountRunSummary) -> String {
         format!("成功 {} 局", summary.won),
         format!("放弃 {} 局", summary.abandoned),
         format!("失败 {} 局", summary.failed),
-        format!("总收益 {:.8}", summary.total_reward),
+        format!("总收益 {}", format_amount(summary.total_reward)),
         format!("今天这个难度还剩 {} 次", summary.remaining_after),
         format_balance_clause(summary.balance_after),
         format_reason_clause(&summary.error_message),
@@ -112,7 +112,7 @@ fn format_difficulty_summary_line(summary: &AccountRunSummary) -> String {
 
 fn format_balance_clause(balance: Option<f64>) -> String {
     balance
-        .map(|value| format!("当前余额 {:.8}", value))
+        .map(|value| format!("当前余额 {}", format_amount(value)))
         .unwrap_or_default()
 }
 
@@ -154,7 +154,7 @@ fn format_runtime_round_result_line(result: &RoundResultSummary) -> String {
         format!("，原因：{}", result.error_message.trim())
     };
     format!(
-        "账号 {} 的{}难度{}结果：{}，{}，耗时 {}ms，奖励 {:.8}，当前余额 {}，今天还剩 {} 次，走了 {} 步{}。",
+        "账号 {} 的{}难度{}结果：{}，{}，耗时 {}，奖励 {}，当前余额 {}，今天还剩 {} 次，走了 {} 步{}。",
         result.email,
         localized_difficulty(&result.difficulty),
         super::format_round_progress(result.round_index, result.round_total),
@@ -172,11 +172,11 @@ fn format_runtime_round_result_line(result: &RoundResultSummary) -> String {
                     .join("、")
             )
         },
-        result.duration_ms,
-        result.reward,
+        format_duration_ms(result.duration_ms),
+        format_amount(result.reward),
         result
             .balance_after
-            .map(|value| format!("{:.8}", value))
+            .map(format_amount)
             .unwrap_or_else(|| "未知".to_string()),
         result.remaining_after,
         result.move_count,

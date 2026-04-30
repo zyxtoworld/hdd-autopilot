@@ -45,7 +45,7 @@ where
             Err(error) if is_retryable_api_error(&error) => {
                 if attempts == 1 || attempts.is_multiple_of(API_RETRY_LOG_EVERY) {
                     state.lock().unwrap().log.line_fmt(format_args!(
-                        "账号 {} 的刮刮乐接口暂时连不上，正在等待接口恢复后继续（第 {} 次）：{}",
+                        "账号 {} 的刮刮乐接口暂时连不上，会继续等接口恢复后再试（第 {} 次尝试）：{}",
                         runtime.email(),
                         attempts,
                         humanize_retryable_api_error(&error)

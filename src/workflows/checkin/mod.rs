@@ -10,6 +10,7 @@ use crate::api::ApiClient;
 use crate::model::{AuthCache, AuthConfig, CheckinResult};
 use crate::storage::{save_cache, upsert_account};
 use crate::ui;
+use crate::workflows::common::{AccountRewardSummary, format_amount, print_account_reward_summary};
 
 use self::auth::{ensure_authenticated, load_auth_me_with_retry};
 pub use self::log::{append_checkin_log, format_checkin_result_line};
@@ -73,20 +74,35 @@ pub fn run_batch(
     let runtimes = new_account_runtimes(&config);
     let mut handles = Vec::with_capacity(runtimes.len());
 
-    for runtime in runtimes {
+    let mut reward_summaries = runtimes
+        .iter()
+        .enumerate()
+        .map(|(index, runtime)| AccountRewardSummary {
+            index,
+            email: runtime.email().to_string(),
+            total_reward: 0.0,
+        })
+        .collect::<Vec<_>>();
+
+    for (index, runtime) in runtimes.into_iter().enumerate() {
         let state = Arc::clone(&state);
         let cancel_flag = Arc::clone(cancel_flag);
         handles.push(std::thread::spawn(move || {
-            run_one_account(&cancel_flag, state, runtime)
+            (index, run_one_account(&cancel_flag, state, runtime))
         }));
     }
 
     let mut results = Vec::new();
     for handle in handles {
-        if let Ok(Some(result)) = handle.join() {
+        if let Ok((index, Some(result))) = handle.join() {
+            if let Some(summary) = reward_summaries.get_mut(index) {
+                summary.email = result.email.clone();
+                summary.total_reward = result.delta;
+            }
             results.push(result);
         }
     }
+    print_account_reward_summary(log, "自动签到", &reward_summaries);
     Ok(results)
 }
 
@@ -199,7 +215,7 @@ fn load_one_balance_line(
             if !email.is_empty() {
                 line.email = email.to_string();
             }
-            line.balance = format!("{:.8}", auth_me.data.balance);
+            line.balance = format_amount(auth_me.data.balance);
             line.status = humanize_account_status(&auth_me.data.status).to_string();
             line
         }

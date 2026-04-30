@@ -6,7 +6,9 @@ use crate::model::{
     SCRATCH_GAME_TYPE_THREE_KIND, SCRATCH_GAME_TYPE_TREASURE_CHEST, ScratchRoundResult,
 };
 use crate::ui;
-use crate::workflows::common::append_account_log_line;
+use crate::workflows::common::{
+    append_account_log_line, format_amount, format_duration_ms as common_format_duration_ms,
+};
 
 pub(super) fn append_scratch_round_log(
     log_dir: &Path,
@@ -46,19 +48,19 @@ fn format_scratch_round_log_line(
 
     if let Some(play_resp) = &result.play_resp {
         lines.push(format!(
-            "这一轮已经开局：玩法是{}，对局编号是 {}，目前状态是{}，这一局花了 {:.2}，当前余额 {:.8}。",
+            "这一轮已经开局：玩法是{}，对局编号是 {}，目前状态是{}，这一局花了 {}，当前余额 {}。",
             game_type_label(&play_resp.game_type),
             play_resp.play_id,
             play_status_label(&play_resp.status),
-            play_resp.cost_amount,
-            play_resp.balance,
+            format_amount(play_resp.cost_amount),
+            format_amount(play_resp.balance),
         ));
     } else if let Some(play_history_item) = &result.play_history_item {
         lines.push(format!(
-            "这一轮先补开之前没处理完的旧对局：对局编号 {}，原来状态是{}，这一局花了 {:.2}。",
+            "这一轮先补开之前没处理完的旧对局：对局编号 {}，原来状态是{}，这一局花了 {}。",
             play_history_item.id,
             play_status_label(&play_history_item.status),
-            play_history_item.cost_amount.unwrap_or(0.0),
+            format_amount(play_history_item.cost_amount.unwrap_or(0.0)),
         ));
     }
 
@@ -85,13 +87,13 @@ fn format_scratch_round_log_line(
     }
     if let Some(reveal_resp) = &result.reveal_resp {
         lines.push(format!(
-            "这一轮已经开奖：玩法是{}，对局编号是 {}，结果是{}，奖金 {:.2}，净收益 {:.2}，当前余额 {:.8}。",
+            "这一轮已经开奖：玩法是{}，对局编号是 {}，结果是{}，奖金 {}，净收益 {}，当前余额 {}。",
             game_type_label(&reveal_resp.game_type),
             reveal_resp.play_id,
             round_outcome_label(result),
-            reveal_resp.reward_amount,
-            reveal_resp.net_amount,
-            reveal_resp.balance,
+            format_amount(reveal_resp.reward_amount),
+            format_amount(reveal_resp.net_amount),
+            format_amount(reveal_resp.balance),
         ));
     }
     if !result.reveal_history_error_message.is_empty() {
@@ -123,17 +125,17 @@ pub(super) fn log_round_result(
 
 fn format_stats_line(total_cost: f64, total_reward: f64, balance_suffix: String) -> String {
     format!(
-        "累计情况：到现在一共花了 {:.2}，一共中了 {:.2}，净收益 {:.2}{}。",
-        total_cost,
-        total_reward,
-        total_reward - total_cost,
+        "累计情况：到现在一共花了 {}，一共中了 {}，净收益 {}{}。",
+        format_amount(total_cost),
+        format_amount(total_reward),
+        format_amount(total_reward - total_cost),
         balance_suffix
     )
 }
 
 fn round_balance_suffix(result: &ScratchRoundResult) -> String {
     match round_balance(result) {
-        Some(balance) => format!("，当前余额 {:.8}", balance),
+        Some(balance) => format!("，当前余额 {}", format_amount(balance)),
         None => String::new(),
     }
 }
@@ -191,8 +193,5 @@ fn play_status_label(status: &str) -> &str {
 }
 
 fn format_duration_ms(duration_ms: i64) -> String {
-    if duration_ms <= 0 {
-        return "0ms".to_string();
-    }
-    format!("{}ms", duration_ms)
+    common_format_duration_ms(duration_ms)
 }

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::model::CheckinResult;
-use crate::workflows::common::beijing_time;
+use crate::workflows::common::{beijing_time, format_amount};
 
 pub fn append_checkin_log(log_dir: impl AsRef<Path>, result: &CheckinResult) -> io::Result<()> {
     fs::create_dir_all(log_dir.as_ref())?;
@@ -28,8 +28,12 @@ pub fn format_checkin_result_line(result: &CheckinResult) -> String {
         format!("，原因：{}", result.error_message.trim())
     };
     format!(
-        "账号 {} 签到结果：{}，本次增加 {:.2}，当前余额 {:.8}{}。",
-        result.email, status, result.delta, result.balance_after, reason,
+        "账号 {} 签到结果：{}，本次增加 {}，当前余额 {}{}。",
+        result.email,
+        status,
+        format_amount(result.delta),
+        format_amount(result.balance_after),
+        reason,
     )
 }
 
@@ -51,7 +55,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "账号 demo@example.com 签到结果：签到失败，本次增加 0.00，当前余额 10.00000000，原因：登录状态已失效。"
+            "账号 demo@example.com 签到结果：签到失败，本次增加 0，当前余额 10，原因：登录状态已失效。"
         );
     }
 
@@ -67,7 +71,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "账号 demo@example.com 签到结果：签到失败（未知原因），本次增加 0.00，当前余额 10.00000000。"
+            "账号 demo@example.com 签到结果：签到失败（未知原因），本次增加 0，当前余额 10。"
         );
     }
 
@@ -86,6 +90,6 @@ mod tests {
         append_checkin_log(dir.path(), &result).unwrap();
         let content = std::fs::read_to_string(dir.path().join("checkin.log")).unwrap();
 
-        assert!(content.contains("账号 demo@example.com 签到结果：签到失败，本次增加 0.00，当前余额 12.34000000，原因：签到接口未返回成功标记。"));
+        assert!(content.contains("账号 demo@example.com 签到结果：签到失败，本次增加 0，当前余额 12.34，原因：签到接口未返回成功标记。"));
     }
 }

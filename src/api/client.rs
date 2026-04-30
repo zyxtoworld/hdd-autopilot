@@ -667,10 +667,11 @@ impl ApiClient {
         }
         serde_json::from_str(&body).map_err(|error| {
             ApiError::Message(format!(
-                "{} 返回的数据格式无法识别，请稍后再试。（接口：{}，解析错误：{}）",
+                "{} 返回的数据格式无法识别，请稍后再试。（接口：{}，解析错误：{}，返回内容：{}）",
                 api_label_for_path(path),
                 path,
-                error
+                error,
+                response_body_preview(&body)
             ))
         })
     }
@@ -680,6 +681,19 @@ impl ApiClient {
         let existing = stored.clone();
         *stored = merge_session_cookies(&existing, set_cookie_headers);
     }
+}
+
+fn response_body_preview(body: &str) -> String {
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return "空".to_string();
+    }
+    const MAX_CHARS: usize = 200;
+    let mut preview = normalized.chars().take(MAX_CHARS).collect::<String>();
+    if normalized.chars().count() > MAX_CHARS {
+        preview.push_str("...");
+    }
+    preview
 }
 
 pub fn is_unauthorized(error: &ApiError) -> bool {

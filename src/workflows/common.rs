@@ -16,6 +16,7 @@ use crate::ui;
 
 const API_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 const API_RETRY_LOG_EVERY: usize = 10;
+const ACCOUNT_TASK_RETRY_BACKOFF: Duration = Duration::ZERO;
 
 #[derive(Debug)]
 pub(crate) struct BatchState {
@@ -55,6 +56,97 @@ impl AccountRuntime {
     pub(crate) fn email(&self) -> &str {
         self.account.email.trim()
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AccountRewardSummary {
+    pub(crate) index: usize,
+    pub(crate) email: String,
+    pub(crate) total_reward: f64,
+}
+
+pub(crate) fn print_account_reward_summary(
+    log: &ui::TaskLog,
+    title: &str,
+    summaries: &[AccountRewardSummary],
+) {
+    if summaries.is_empty() {
+        return;
+    }
+    let mut summaries = summaries.to_vec();
+    summaries.sort_by_key(|summary| summary.index);
+    log.line_fmt(format_args!("【{}】所有账号收益汇总：", title));
+    let mut all_accounts_total = 0.0;
+    for summary in &summaries {
+        all_accounts_total += summary.total_reward;
+        log.line_fmt(format_args!(
+            "  {}. {}：总收益 {}",
+            summary.index + 1,
+            summary.email,
+            format_amount(summary.total_reward)
+        ));
+    }
+    log.line_fmt(format_args!(
+        "【{}】所有账号总收益：{}",
+        title,
+        format_amount(all_accounts_total)
+    ));
+}
+
+pub(crate) fn format_amount(value: f64) -> String {
+    if !value.is_finite() {
+        return value.to_string();
+    }
+    let normalized = if value.abs() < 0.000000005 {
+        0.0
+    } else {
+        value
+    };
+    let mut text = format!("{:.8}", normalized);
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" { "0".to_string() } else { text }
+}
+
+pub(crate) fn format_duration_ms(duration_ms: i64) -> String {
+    let seconds = duration_ms.max(0) as f64 / 1000.0;
+    format!("{seconds:.3}秒")
+}
+
+pub(crate) fn run_account_task_until_complete<T, F>(
+    cancel_flag: &ui::CancelFlag,
+    log: &ui::TaskLog,
+    task_name: &str,
+    email: &str,
+    mut action: F,
+) -> io::Result<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    let mut retry_count = 0usize;
+    loop {
+        ui::check_cancel(cancel_flag)?;
+        match action() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
+            Err(error) => {
+                retry_count += 1;
+                log.line_fmt(format_args!(
+                    "账号 {} 的{}这次没有跑完：{}。不会跳过，等一下重新进入续残局/剩余次数（第 {} 次重试）。",
+                    email, task_name, error, retry_count
+                ));
+                ui::sleep_with_cancel(cancel_flag, ACCOUNT_TASK_RETRY_BACKOFF)?;
+            }
+        }
+    }
+}
+
+pub(crate) fn retry_operation_with_step(operation: &str, step: i32) -> String {
+    format!("{}#step={}", operation, step.max(1))
 }
 
 pub(crate) fn current_unix_ms() -> i64 {
@@ -345,10 +437,15 @@ pub(crate) fn log_retryable_api_error(
     error: &ApiError,
 ) {
     if attempts == 1 || attempts.is_multiple_of(API_RETRY_LOG_EVERY) {
+        let (operation, step) = parse_retry_operation(operation);
+        let step_clause = step
+            .map(|step| format!("，卡在第 {} 步", step))
+            .unwrap_or_default();
         state.lock().unwrap().log.line_fmt(format_args!(
-            "账号 {} 的{}暂时连不上，正在等待接口恢复后继续（第 {} 次）：{}",
+            "账号 {} 的{}暂时连不上{}，会继续等接口恢复后再试（第 {} 次尝试）：{}",
             email,
             localized_retry_operation(operation),
+            step_clause,
             attempts,
             humanize_retryable_api_error(error)
         ));
@@ -383,6 +480,13 @@ pub(crate) fn humanize_retryable_api_error(error: &ApiError) -> String {
     } else {
         reason.to_string()
     }
+}
+
+fn parse_retry_operation(operation: &str) -> (&str, Option<i32>) {
+    let Some((operation, step)) = operation.split_once("#step=") else {
+        return (operation, None);
+    };
+    (operation, step.trim().parse::<i32>().ok())
 }
 
 fn localized_retry_operation(operation: &str) -> &'static str {
@@ -553,5 +657,18 @@ mod tests {
             humanize_retryable_api_error(&error),
             "网络请求发送失败（接口：/puzzle15-api/move）"
         );
+    }
+
+    #[test]
+    fn amount_display_trims_trailing_zeroes() {
+        assert_eq!(format_amount(12.34000000), "12.34");
+        assert_eq!(format_amount(10.0), "10");
+        assert_eq!(format_amount(0.0), "0");
+    }
+
+    #[test]
+    fn duration_display_uses_seconds_with_three_decimals() {
+        assert_eq!(format_duration_ms(1234), "1.234秒");
+        assert_eq!(format_duration_ms(0), "0.000秒");
     }
 }

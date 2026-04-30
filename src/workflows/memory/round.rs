@@ -10,8 +10,8 @@ use crate::model::{
 use crate::solver::memory::MemorySolver;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
-    with_auth_retry_api_until_success,
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
+    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
 };
 
 use super::types::{MemoryDifficultySummary, MemoryRoundSummary, MemorySnapshot, RoundProgress};
@@ -131,7 +131,14 @@ pub(super) fn play_round(
             ));
         };
 
-        match flip_once(cancel_flag, state, runtime, snapshot.session_id, index) {
+        match flip_once(
+            cancel_flag,
+            state,
+            runtime,
+            snapshot.session_id,
+            index,
+            snapshot.peek_count + 1,
+        ) {
             Ok(step) => {
                 if !step.ok {
                     consecutive_fail += 1;
@@ -185,12 +192,14 @@ fn flip_once(
     runtime: &mut AccountRuntime,
     session_id: i32,
     index: i32,
+    step_number: i32,
 ) -> io::Result<MemoryFlipResponse> {
+    let operation = retry_operation_with_step("memory flip", step_number);
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        "memory flip",
+        &operation,
         |client, auth_token| client.flip_memory(auth_token, session_id, index),
     )
 }

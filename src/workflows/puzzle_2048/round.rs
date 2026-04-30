@@ -10,8 +10,8 @@ use crate::model::{
 use crate::solver::puzzle_2048::{self, DEFAULT_DIRECTIONS, Direction};
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
-    with_auth_retry_api_until_success,
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
+    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
 };
 
 use super::types::{PuzzleDifficultySummary, PuzzleRoundSummary, PuzzleSnapshot, RoundProgress};
@@ -112,7 +112,14 @@ pub(super) fn play_round(
         )
         .unwrap_or_else(|| directions.first().copied().unwrap_or(Direction::Up));
         let valid_dirs = puzzle_2048::legal_moves(&snapshot.board, &directions);
-        let response = move_once(cancel_flag, state, runtime, snapshot.session_id, direction);
+        let response = move_once(
+            cancel_flag,
+            state,
+            runtime,
+            snapshot.session_id,
+            direction,
+            snapshot.move_count + 1,
+        );
         match response {
             Ok(step) => {
                 if !step.ok {
@@ -152,7 +159,14 @@ pub(super) fn play_round(
                     ));
                     let alt = valid_dirs.into_iter().find(|item| *item != direction);
                     if let Some(alt) = alt {
-                        match move_once(cancel_flag, state, runtime, snapshot.session_id, alt) {
+                        match move_once(
+                            cancel_flag,
+                            state,
+                            runtime,
+                            snapshot.session_id,
+                            alt,
+                            snapshot.move_count + 1,
+                        ) {
                             Ok(alt_step) => {
                                 if !alt_step.ok {
                                     let next_snapshot =
@@ -249,12 +263,14 @@ fn move_once(
     runtime: &mut AccountRuntime,
     session_id: i32,
     direction: Direction,
+    step_number: i32,
 ) -> io::Result<Puzzle2048MoveResponse> {
+    let operation = retry_operation_with_step("puzzle2048 move", step_number);
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        "puzzle2048 move",
+        &operation,
         |client, auth_token| {
             client.move_puzzle_2048(auth_token, session_id, direction.as_api_str())
         },

@@ -12,6 +12,7 @@ use crate::model::{AuthCache, AuthConfig};
 use crate::runtime::resolve_data_file_path;
 use crate::storage::{save_cache, upsert_account};
 use crate::ui;
+use crate::workflows::common::run_account_task_until_complete;
 
 use self::auth::ensure_authenticated;
 use self::round::{RoundLoop, run_one_round, settle_pending_rounds};
@@ -153,18 +154,15 @@ fn run_account_worker(
         .unwrap()
         .log
         .line_fmt(format_args!("当前账号：{}", runtime.email()));
-    match run_account_until_complete(cancel_flag, &state, &mut runtime, options, log_dir) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(()),
-        Err(error) => {
-            state.lock().unwrap().log.line_fmt(format_args!(
-                "账号 {} 自动随机刮刮乐运行失败：{}",
-                runtime.email(),
-                error
-            ));
-            Ok(())
-        }
-    }
+    let email = runtime.email().to_string();
+    let task_log = state.lock().unwrap().log.clone();
+    run_account_task_until_complete(
+        cancel_flag,
+        &task_log,
+        "自动随机刮刮乐",
+        &email,
+        || run_account_until_complete(cancel_flag, &state, &mut runtime, options, log_dir),
+    )
 }
 
 fn run_account_until_complete(

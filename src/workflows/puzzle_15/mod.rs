@@ -2,7 +2,7 @@ mod log;
 mod round;
 mod types;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,8 @@ use crate::model::{
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, ensure_authenticated, with_auth_retry,
+    AccountRewardSummary, AccountRuntime, BatchState, current_unix_ms, ensure_authenticated,
+    format_amount, print_account_reward_summary, run_account_task_until_complete, with_auth_retry,
     with_auth_retry_api_until_success,
 };
 
@@ -34,6 +35,13 @@ pub const DONE_MESSAGE: &str = "自动华容道已完成。";
 #[derive(Debug, Clone)]
 pub struct AccountRunOutput {
     pub account: AuthCache,
+    pub total_reward: f64,
+}
+
+#[derive(Default)]
+struct AccountProgressCache {
+    summaries: HashMap<String, Puzzle15DifficultySummary>,
+    seen_session_ids: HashSet<i32>,
 }
 
 pub fn run_batch(
@@ -61,33 +69,53 @@ pub fn run_batch(
         accounts.len()
     ));
 
+    let mut reward_summaries = accounts
+        .iter()
+        .enumerate()
+        .map(|(index, account)| AccountRewardSummary {
+            index,
+            email: account.email.trim().to_string(),
+            total_reward: 0.0,
+        })
+        .collect::<Vec<_>>();
     let mut handles = Vec::with_capacity(accounts.len());
-    for account in accounts {
+    for (index, account) in accounts.into_iter().enumerate() {
         ui::check_cancel(cancel_flag)?;
         let state = Arc::clone(&state);
         let cancel_flag = Arc::clone(cancel_flag);
         let base_url = base_url.clone();
-        handles.push(std::thread::spawn(move || {
-            let mut runtime = AccountRuntime::new(&base_url, account);
-            let email = runtime.email().to_string();
-            match run_account(&cancel_flag, &state, &mut runtime) {
-                Ok(_) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => Err(error),
-                Err(error) => {
-                    state
-                        .lock()
-                        .unwrap()
-                        .log
-                        .line_fmt(format_args!("账号 {} 自动华容道运行失败：{}", email, error));
-                    Ok(())
-                }
-            }
-        }));
+        handles.push(std::thread::spawn(
+            move || -> io::Result<AccountRewardSummary> {
+                let mut runtime = AccountRuntime::new(&base_url, account);
+                let email = runtime.email().to_string();
+                let mut progress_cache = AccountProgressCache::default();
+                let task_log = state.lock().unwrap().log.clone();
+                let summaries = run_account_task_until_complete(
+                    &cancel_flag,
+                    &task_log,
+                    "自动华容道",
+                    &email,
+                    || run_account(&cancel_flag, &state, &mut runtime, &mut progress_cache),
+                )?;
+                Ok(AccountRewardSummary {
+                    index,
+                    email: summaries
+                        .first()
+                        .map(|summary| summary.email.clone())
+                        .unwrap_or(email),
+                    total_reward: summaries.iter().map(|summary| summary.total_reward).sum(),
+                })
+            },
+        ));
     }
 
     for handle in handles {
         match handle.join() {
-            Ok(Ok(())) => {}
+            Ok(Ok(summary)) => {
+                if let Some(slot) = reward_summaries.get_mut(summary.index) {
+                    *slot = summary;
+                }
+            }
             Ok(Err(error)) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
             Ok(Err(error)) => return Err(error),
             Err(_) => state
@@ -97,6 +125,7 @@ pub fn run_batch(
                 .line("自动华容道任务异常退出，请查看前面的账号日志定位原因。"),
         }
     }
+    print_account_reward_summary(log, "自动华容道", &reward_summaries);
 
     Ok(state.lock().unwrap().config.clone())
 }
@@ -118,7 +147,14 @@ pub fn run_account_for_free_play_with_log(
         log: log.clone(),
     }));
     let mut runtime = AccountRuntime::new(&config.base_url, account);
-    let _summaries = run_account(cancel_flag, &state, &mut runtime)?;
+    let mut progress_cache = AccountProgressCache::default();
+    let task_log = state.lock().unwrap().log.clone();
+    let email = runtime.email().to_string();
+    let summaries =
+        run_account_task_until_complete(cancel_flag, &task_log, "自动华容道", &email, || {
+            run_account(cancel_flag, &state, &mut runtime, &mut progress_cache)
+        })?;
+    let total_reward = summaries.iter().map(|summary| summary.total_reward).sum();
     let updated_account = state
         .lock()
         .unwrap()
@@ -129,6 +165,7 @@ pub fn run_account_for_free_play_with_log(
         .unwrap_or(fallback_account);
     Ok(AccountRunOutput {
         account: updated_account,
+        total_reward,
     })
 }
 
@@ -136,6 +173,7 @@ fn run_account(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    progress_cache: &mut AccountProgressCache,
 ) -> io::Result<Vec<Puzzle15DifficultySummary>> {
     ui::check_cancel(cancel_flag)?;
     ensure_authenticated(state, runtime)?;
@@ -160,7 +198,10 @@ fn run_account(
     let me = fetch_me(cancel_flag, state, runtime)?;
     let mut used_today = me.daily_plays_used.clone();
     let drained = drain_pending_session(cancel_flag, state, runtime, &config, &me)?;
-    let mut summaries = summarize_rounds_by_difficulty(runtime.email(), &drained);
+    for result in &drained {
+        merge_round_into_cache(progress_cache, runtime.email(), result);
+    }
+    let mut summaries = progress_cache.summaries.clone();
     let mut all_summaries = Vec::new();
 
     for difficulty in difficulties {
@@ -188,16 +229,17 @@ fn run_account(
                 remaining,
             },
             &mut used_today,
+            progress_cache,
         )?;
         append_difficulty_summary(&state.lock().unwrap().result_log_dir, &summary)?;
         state.lock().unwrap().log.line_fmt(format_args!(
-            "账号 {} 的华容道{}难度已完成：一共玩了 {} 局，成功 {} 局，失败 {} 局，总收益 {:.8}，今天还剩 {} 次。",
+            "账号 {} 的华容道{}难度已完成：一共玩了 {} 局，成功 {} 局，失败 {} 局，总收益 {}，今天还剩 {} 次。",
             summary.email,
             localized_difficulty(&summary.difficulty),
             summary.played,
             summary.won,
             summary.failed,
-            summary.total_reward,
+            format_amount(summary.total_reward),
             summary.remaining_after,
         ));
         all_summaries.push(summary);
@@ -278,6 +320,7 @@ fn run_difficulty(
     config: &Puzzle15ConfigResponse,
     plan: DifficultyRunPlan,
     used_today: &mut HashMap<String, i32>,
+    progress_cache: &mut AccountProgressCache,
 ) -> io::Result<Puzzle15DifficultySummary> {
     let DifficultyRunPlan {
         difficulty,
@@ -372,6 +415,7 @@ fn run_difficulty(
                         }
                         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
                         log_round_result(&state.lock().unwrap().log, &result);
+                        merge_round_into_cache(progress_cache, runtime.email(), &result);
                         if item.difficulty == difficulty {
                             merge_round_into_summary(&mut summary, &result);
                             used_today.insert(difficulty.to_string(), current_round_index);
@@ -426,6 +470,7 @@ fn run_difficulty(
                     }
                     append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
                     log_round_result(&state.lock().unwrap().log, &result);
+                    merge_round_into_cache(progress_cache, runtime.email(), &result);
                     if item.difficulty == difficulty {
                         merge_round_into_summary(&mut summary, &result);
                         used_today.insert(difficulty.to_string(), current_round_index);
@@ -447,6 +492,7 @@ fn run_difficulty(
         result.remaining_after = current_remaining;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
         log_round_result(&state.lock().unwrap().log, &result);
+        merge_round_into_cache(progress_cache, runtime.email(), &result);
         merge_round_into_summary(&mut summary, &result);
         used_today.insert(difficulty.to_string(), current_round_index);
     }
@@ -514,23 +560,23 @@ fn remaining_from_me(
         .max(0)
 }
 
-fn summarize_rounds_by_difficulty(
+fn merge_round_into_cache(
+    cache: &mut AccountProgressCache,
     email: &str,
-    rounds: &[Puzzle15RoundSummary],
-) -> HashMap<String, Puzzle15DifficultySummary> {
-    let mut stats = HashMap::new();
-    for round in rounds {
-        let entry =
-            stats
-                .entry(round.difficulty.clone())
-                .or_insert_with(|| Puzzle15DifficultySummary {
-                    email: email.to_string(),
-                    difficulty: round.difficulty.clone(),
-                    ..Puzzle15DifficultySummary::default()
-                });
-        merge_round_into_summary(entry, round);
+    result: &Puzzle15RoundSummary,
+) {
+    if result.session_id > 0 && !cache.seen_session_ids.insert(result.session_id) {
+        return;
     }
-    stats
+    let entry = cache
+        .summaries
+        .entry(result.difficulty.clone())
+        .or_insert_with(|| Puzzle15DifficultySummary {
+            email: email.to_string(),
+            difficulty: result.difficulty.clone(),
+            ..Puzzle15DifficultySummary::default()
+        });
+    merge_round_into_summary(entry, result);
 }
 
 fn is_new_round_unavailable_error(message: &str) -> bool {

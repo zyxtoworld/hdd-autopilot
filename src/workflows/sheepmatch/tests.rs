@@ -618,7 +618,8 @@ fn remaining_plays_uses_tile_me_remaining() {
         auth_token: "Bearer token".to_string(),
     };
 
-    let remaining = remaining_plays(&state, &mut runtime, "easy").unwrap();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let remaining = remaining_plays(&cancel_flag, &state, &mut runtime, "easy").unwrap();
 
     assert_eq!(remaining, 3);
 }

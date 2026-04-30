@@ -10,8 +10,8 @@ use crate::model::{
 use crate::solver::sudoku;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
-    with_auth_retry_api_until_success,
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
+    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
 };
 
 use super::types::{RoundProgress, SudokuDifficultySummary, SudokuRoundSummary, SudokuSnapshot};
@@ -139,10 +139,13 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
-            snapshot.session_id,
-            fill.row,
-            fill.col,
-            Some(fill.value),
+            SudokuFillAttempt {
+                session_id: snapshot.session_id,
+                row: fill.row,
+                col: fill.col,
+                value: Some(fill.value),
+                step_number: snapshot.move_count + 1,
+            },
         )?;
         if !step.ok {
             return Ok(build_round_summary(
@@ -212,21 +215,35 @@ pub(super) fn play_round(
     ))
 }
 
-fn fill_once(
-    cancel_flag: &ui::CancelFlag,
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
+struct SudokuFillAttempt {
     session_id: i32,
     row: i32,
     col: i32,
     value: Option<i32>,
+    step_number: i32,
+}
+
+fn fill_once(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    attempt: SudokuFillAttempt,
 ) -> io::Result<SudokuFillResponse> {
+    let operation = retry_operation_with_step("sudoku fill", attempt.step_number);
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        "sudoku fill",
-        |client, auth_token| client.fill_sudoku(auth_token, session_id, row, col, value),
+        &operation,
+        |client, auth_token| {
+            client.fill_sudoku(
+                auth_token,
+                attempt.session_id,
+                attempt.row,
+                attempt.col,
+                attempt.value,
+            )
+        },
     )
 }
 
@@ -442,10 +459,13 @@ fn clear_and_refill_wrong_cells(
             cancel_flag,
             state,
             runtime,
-            snapshot.session_id,
-            fill.row,
-            fill.col,
-            None,
+            SudokuFillAttempt {
+                session_id: snapshot.session_id,
+                row: fill.row,
+                col: fill.col,
+                value: None,
+                step_number: snapshot.move_count + 1,
+            },
         )?;
         if !step.ok {
             return Err(io::Error::other("清空错误格时接口返回 ok=false"));
@@ -469,10 +489,13 @@ fn clear_and_refill_wrong_cells(
             cancel_flag,
             state,
             runtime,
-            snapshot.session_id,
-            fill.row,
-            fill.col,
-            Some(fill.value),
+            SudokuFillAttempt {
+                session_id: snapshot.session_id,
+                row: fill.row,
+                col: fill.col,
+                value: Some(fill.value),
+                step_number: snapshot.move_count + 1,
+            },
         )?;
         if !step.ok {
             return Err(io::Error::other("重填正确值时接口返回 ok=false"));

@@ -10,8 +10,8 @@ use crate::model::{
 use crate::solver::puzzle_15;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status, same_beijing_day,
-    with_auth_retry_api_until_success,
+    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
+    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
 };
 
 use super::types::{
@@ -112,6 +112,7 @@ pub(super) fn play_round(
             runtime,
             snapshot.session_id,
             direction.as_api_str(),
+            snapshot.move_count + 1,
         )?;
         if !step.ok {
             return Ok(build_round_summary(
@@ -147,12 +148,14 @@ fn move_once(
     runtime: &mut AccountRuntime,
     session_id: i32,
     direction: &str,
+    step_number: i32,
 ) -> io::Result<Puzzle15MoveResponse> {
+    let operation = retry_operation_with_step("puzzle15 move", step_number);
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        "puzzle15 move",
+        &operation,
         |client, auth_token| client.move_puzzle_15(auth_token, session_id, direction),
     )
 }

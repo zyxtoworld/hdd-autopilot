@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -13,7 +12,7 @@ use crate::workflows::common::{
     current_unix_ms, humanize_retryable_api_error, is_pending_round_status, is_retryable_api_error,
 };
 
-use super::auth::{with_auth_retry, with_auth_retry_api};
+use super::auth::{with_auth_retry_api, with_auth_retry_until_success};
 use super::snapshot::{
     fixed_click_queue, is_slot_full_error, is_solved, is_stale_click_error,
     snapshot_from_start_response, snapshot_from_step_response,
@@ -46,7 +45,8 @@ pub(super) fn play_round(
     if click_queue.is_empty() {
         if is_solved(&snapshot) {
             let remaining_after =
-                remaining_plays(state, runtime, &snapshot.difficulty).unwrap_or_default();
+                remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty)
+                    .unwrap_or_default();
             return Ok(RoundResultSummary {
                 email: runtime.email().to_string(),
                 difficulty: snapshot.difficulty.clone(),
@@ -81,7 +81,8 @@ pub(super) fn play_round(
         ui::check_cancel(cancel_flag)?;
         if is_solved(&snapshot) {
             let remaining_after =
-                remaining_plays(state, runtime, &snapshot.difficulty).unwrap_or_default();
+                remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty)
+                    .unwrap_or_default();
             return Ok(RoundResultSummary {
                 email: runtime.email().to_string(),
                 difficulty: snapshot.difficulty.clone(),
@@ -135,9 +136,10 @@ pub(super) fn play_round(
                 Err(error) if is_retryable_step_transport_error(&error) => {
                     if step_attempts == 1 || step_attempts.is_multiple_of(STEP_RETRY_LOG_EVERY) {
                         state.lock().unwrap().log.line_fmt(format_args!(
-                            "账号 {} 的羊了个羊第 {} 步请求暂时失败，继续等待接口返回成功后再推进：{}",
+                            "账号 {} 的羊了个羊卡在第 {} 步，接口暂时连不上，会等接口恢复后继续（第 {} 次尝试）：{}",
                             runtime.email(),
                             snapshot.move_count + 1,
+                            step_attempts,
                             humanize_retryable_api_error(&error)
                         ));
                     }
@@ -151,7 +153,7 @@ pub(super) fn play_round(
             Ok(step) => {
                 let email = runtime.email().to_string();
                 let remaining_after =
-                    remaining_plays(state, runtime, &snapshot.difficulty).unwrap_or(0);
+                    remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty).unwrap_or(0);
                 let result = build_round_from_step(
                     &email,
                     &snapshot,
@@ -199,7 +201,7 @@ pub(super) fn play_round(
 
     if is_solved(&snapshot) {
         let remaining_after =
-            remaining_plays(state, runtime, &snapshot.difficulty).unwrap_or_default();
+            remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty).unwrap_or_default();
         return Ok(RoundResultSummary {
             email: runtime.email().to_string(),
             difficulty: snapshot.difficulty.clone(),
@@ -255,32 +257,19 @@ pub(super) fn normalize_round_total(current: i32, total: i32) -> i32 {
 }
 
 pub(super) fn remaining_plays(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     difficulty: &str,
 ) -> io::Result<i32> {
-    let me = with_auth_retry(state, runtime, |client, auth_token| {
-        client.get_tile_me(auth_token)
-    })?;
+    let me = with_auth_retry_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "tile me",
+        |client, auth_token| client.get_tile_me(auth_token),
+    )?;
     Ok(*me.daily_plays_remaining.get(difficulty).unwrap_or(&0))
-}
-
-pub(super) fn summarize_rounds_by_difficulty(
-    email: &str,
-    rounds: &[RoundResultSummary],
-) -> HashMap<String, AccountRunSummary> {
-    let mut stats = HashMap::new();
-    for round in rounds {
-        let entry = stats
-            .entry(round.difficulty.clone())
-            .or_insert_with(|| AccountRunSummary {
-                email: email.to_string(),
-                difficulty: round.difficulty.clone(),
-                ..AccountRunSummary::default()
-            });
-        merge_round_into_summary(entry, round);
-    }
-    stats
 }
 
 struct StepRoundContext<'a> {
