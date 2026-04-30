@@ -5,8 +5,10 @@ use std::sync::Arc;
 use crate::model::AuthConfig;
 use crate::storage::{cache_from_login, load_cache, save_cache, upsert_account};
 use crate::ui;
+use crate::workflows::common::format_amount;
 use crate::workflows::free_play::{FreeFeatureRunners, execute_all_free_features};
 use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, scratch, sheepmatch, sudoku};
+use unicode_width::UnicodeWidthStr;
 
 use super::prompt::{prompt_choice, prompt_email, prompt_password};
 use super::{ADD_ACCOUNT_RETRY_PROMPT, render_menu_page};
@@ -488,19 +490,134 @@ fn print_account_summary(config: &mut AuthConfig, auth_path: &Path) {
                 println!("[账号] （还没有）");
                 return;
             }
+            let account_label_width = (1..=lines.len())
+                .map(|index| display_width(&format!("[账号 {}]", index)))
+                .max()
+                .unwrap_or(0);
+            let email_width = lines
+                .iter()
+                .map(|line| display_width(&line.email))
+                .max()
+                .unwrap_or(0);
+            let balance_width = lines
+                .iter()
+                .map(|line| display_width(&line.balance))
+                .max()
+                .unwrap_or(0);
             for (index, line) in lines.iter().enumerate() {
                 println!(
-                    "[账号 {}] {} | 余额 {} | 账号状态 {}",
-                    index + 1,
-                    line.email,
-                    line.balance,
-                    line.status,
+                    "{}",
+                    format_account_summary_line(
+                        index + 1,
+                        line,
+                        account_label_width,
+                        email_width,
+                        balance_width,
+                    )
                 );
             }
+            let total_balance = lines
+                .iter()
+                .filter_map(balance_amount_from_line)
+                .sum::<f64>();
+            println!("所有账号余额汇总：{}", format_amount(total_balance));
         }
         Err(error) => {
             println!("[账号] 刷新余额失败：{}", error);
             print_account_list(config);
         }
+    }
+}
+
+fn format_account_summary_line(
+    index: usize,
+    line: &checkin::BalanceLine,
+    account_label_width: usize,
+    email_width: usize,
+    balance_width: usize,
+) -> String {
+    format!(
+        "{} {} | 余额 {} | 账号状态 {}",
+        pad_display_right(&format!("[账号 {}]", index), account_label_width),
+        pad_display_right(&line.email, email_width),
+        pad_display_right(&line.balance, balance_width),
+        line.status,
+    )
+}
+
+fn pad_display_right(text: &str, width: usize) -> String {
+    let padding = width.saturating_sub(display_width(text));
+    format!("{}{}", text, " ".repeat(padding))
+}
+
+fn display_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+fn balance_amount_from_line(line: &checkin::BalanceLine) -> Option<f64> {
+    line.balance
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflows::checkin::BalanceLine;
+
+    #[test]
+    fn account_summary_lines_align_separators() {
+        let lines = [
+            BalanceLine {
+                email: "short@example.org".to_string(),
+                balance: "817.37747521".to_string(),
+                status: "正常".to_string(),
+            },
+            BalanceLine {
+                email: "very-long-account@example.org".to_string(),
+                balance: "9.5".to_string(),
+                status: "正常".to_string(),
+            },
+        ];
+        let account_label_width = (1..=lines.len())
+            .map(|index| display_width(&format!("[账号 {}]", index)))
+            .max()
+            .unwrap();
+        let email_width = lines
+            .iter()
+            .map(|line| display_width(&line.email))
+            .max()
+            .unwrap();
+        let balance_width = lines
+            .iter()
+            .map(|line| display_width(&line.balance))
+            .max()
+            .unwrap();
+
+        let rendered = lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                format_account_summary_line(
+                    index + 1,
+                    line,
+                    account_label_width,
+                    email_width,
+                    balance_width,
+                )
+            })
+            .collect::<Vec<_>>();
+        let separator_columns = rendered
+            .iter()
+            .map(|line| {
+                line.match_indices('|')
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(separator_columns[0], separator_columns[1]);
     }
 }
