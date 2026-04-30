@@ -16,6 +16,10 @@ use crate::ui;
 
 const API_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 const API_RETRY_LOG_EVERY: usize = 10;
+#[cfg(not(test))]
+pub(crate) const API_RETRY_MAX_ATTEMPTS: usize = 60;
+#[cfg(test)]
+pub(crate) const API_RETRY_MAX_ATTEMPTS: usize = 2;
 const ACCOUNT_TASK_RETRY_BACKOFF: Duration = Duration::ZERO;
 
 #[derive(Debug)]
@@ -389,6 +393,16 @@ where
             Ok(value) => return Ok(value),
             Err(error) if is_retryable_api_error(&error) => {
                 log_retryable_api_error(state, runtime.email(), operation, attempts, &error);
+                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                    log_retry_exhausted_api_error(
+                        state,
+                        runtime.email(),
+                        operation,
+                        attempts,
+                        &error,
+                    );
+                    return Err(retry_exhausted_api_error(operation, attempts, &error));
+                }
                 ui::sleep_with_cancel(cancel_flag, API_RETRY_BACKOFF)?;
             }
             Err(error) => return Err(api_error_to_io_error(error)),
@@ -396,19 +410,29 @@ where
     }
 }
 
-pub(crate) fn with_auth_retry<T, F>(
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
-    action: F,
-) -> io::Result<T>
-where
-    F: Fn(&ApiClient, &str) -> Result<T, ApiError>,
-{
-    with_auth_retry_api(state, runtime, action).map_err(api_error_to_io_error)
-}
-
 pub(crate) fn api_error_to_io_error(error: ApiError) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+pub(crate) fn retry_exhausted_api_error(
+    operation: &str,
+    attempts: usize,
+    error: &ApiError,
+) -> io::Error {
+    let (operation, step) = parse_retry_operation(operation);
+    let step_clause = step
+        .map(|step| format!("，卡在第 {} 步", step))
+        .unwrap_or_default();
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "{}{}连续重试 {} 次仍失败，准备重新进入玩法续残局：{}",
+            localized_retry_operation(operation),
+            step_clause,
+            attempts,
+            humanize_retryable_api_error(error)
+        ),
+    )
 }
 
 pub(crate) fn is_retryable_api_error(error: &ApiError) -> bool {
@@ -421,7 +445,7 @@ pub(crate) fn is_retryable_api_error(error: &ApiError) -> bool {
                 return false;
             }
             if *status == 429 {
-                return is_retryable_rate_limit_message(message);
+                return true;
             }
             matches!(*status, 408 | 425 | 500..=599) || is_retryable_api_message(message)
         }
@@ -452,7 +476,44 @@ pub(crate) fn log_retryable_api_error(
     }
 }
 
+pub(crate) fn log_retry_exhausted_api_error(
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    operation: &str,
+    attempts: usize,
+    error: &ApiError,
+) {
+    let (operation, step) = parse_retry_operation(operation);
+    let step_clause = step
+        .map(|step| format!("，卡在第 {} 步", step))
+        .unwrap_or_default();
+    state.lock().unwrap().log.line_fmt(format_args!(
+        "账号 {} 的{}{}连续重试 {} 次仍失败，准备重新进入玩法续残局：{}",
+        email,
+        localized_retry_operation(operation),
+        step_clause,
+        attempts,
+        humanize_retryable_api_error(error)
+    ));
+}
+
 pub(crate) fn humanize_retryable_api_error(error: &ApiError) -> String {
+    if let ApiError::HttpStatus { status, message } = error {
+        let reason = match *status {
+            429 => Some("请求太频繁，服务端要求稍后再试"),
+            500..=599 => Some("服务端暂时异常"),
+            408 => Some("请求超时"),
+            425 => Some("服务端要求稍后再试"),
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            if let Some(path) = extract_url_path(message) {
+                return format!("{}（接口：{}）", reason, path);
+            }
+            return reason.to_string();
+        }
+    }
+
     let message = error.to_string();
     let lower = message.to_ascii_lowercase();
     let reason = if lower.contains("error sending request") {
@@ -491,17 +552,25 @@ fn parse_retry_operation(operation: &str) -> (&str, Option<i32>) {
 
 fn localized_retry_operation(operation: &str) -> &'static str {
     match operation {
+        "puzzle2048 config" => "谜题2048配置接口",
         "puzzle2048 me" => "谜题2048次数查询接口",
+        "puzzle2048 history" => "谜题2048历史接口",
         "puzzle2048 start" => "谜题2048开局接口",
         "puzzle2048 move" => "谜题2048移动接口",
         "puzzle2048 abandon" => "谜题2048结算接口",
+        "memory config" => "记忆翻牌配置接口",
         "memory me" => "记忆翻牌次数查询接口",
+        "memory history" => "记忆翻牌历史接口",
         "memory start" => "记忆翻牌开局接口",
         "memory flip" => "记忆翻牌翻牌接口",
+        "puzzle15 config" => "华容道配置接口",
         "puzzle15 me" => "华容道次数查询接口",
+        "puzzle15 history" => "华容道历史接口",
         "puzzle15 start" => "华容道开局接口",
         "puzzle15 move" => "华容道移动接口",
+        "sudoku config" => "数独配置接口",
         "sudoku me" => "数独次数查询接口",
+        "sudoku history" => "数独历史接口",
         "sudoku start" => "数独开局接口",
         "sudoku fill" => "数独填数接口",
         _ => "接口",
@@ -551,21 +620,6 @@ fn is_retryable_api_message(message: &str) -> bool {
         "hyper",
         "unexpected eof",
         "broken pipe",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-}
-
-fn is_retryable_rate_limit_message(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    [
-        "rate limit",
-        "too many requests",
-        "retry after",
-        "temporarily",
-        "temporary",
-        "请求太频繁",
-        "稍后再试",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -624,6 +678,62 @@ mod tests {
         };
 
         assert!(is_retryable_api_error(&error));
+    }
+
+    #[test]
+    fn generic_429_remains_retryable_after_business_errors_are_filtered() {
+        let error = ApiError::HttpStatus {
+            status: 429,
+            message: "请求失败了（状态码 429）：服务端返回了错误".to_string(),
+        };
+
+        assert!(is_retryable_api_error(&error));
+    }
+
+    #[test]
+    fn retry_operation_can_carry_step_for_http_errors() {
+        let operation = retry_operation_with_step("puzzle2048 move", 12);
+        let (operation, step) = parse_retry_operation(&operation);
+
+        assert_eq!(operation, "puzzle2048 move");
+        assert_eq!(step, Some(12));
+    }
+
+    #[test]
+    fn retry_exhaustion_returns_timed_out_error_with_step() {
+        let error = ApiError::HttpStatus {
+            status: 503,
+            message: "请求失败了（状态码 503）：服务端暂时异常".to_string(),
+        };
+        let exhausted = retry_exhausted_api_error(
+            &retry_operation_with_step("puzzle2048 move", 12),
+            API_RETRY_MAX_ATTEMPTS,
+            &error,
+        );
+
+        assert_eq!(exhausted.kind(), io::ErrorKind::TimedOut);
+        assert!(exhausted.to_string().contains("卡在第 12 步"));
+    }
+
+    #[test]
+    fn humanized_http_retry_errors_are_plain_language() {
+        let rate_limited = ApiError::HttpStatus {
+            status: 429,
+            message: "请求失败了（状态码 429）：服务端返回了错误".to_string(),
+        };
+        let server_error = ApiError::HttpStatus {
+            status: 503,
+            message: "请求失败了（状态码 503）：服务端暂时异常".to_string(),
+        };
+
+        assert_eq!(
+            humanize_retryable_api_error(&rate_limited),
+            "请求太频繁，服务端要求稍后再试"
+        );
+        assert_eq!(
+            humanize_retryable_api_error(&server_error),
+            "服务端暂时异常"
+        );
     }
 
     #[test]

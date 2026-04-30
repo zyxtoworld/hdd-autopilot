@@ -15,7 +15,7 @@ use crate::runtime::resolve_data_file_path;
 use crate::ui;
 use crate::workflows::common::{
     AccountRewardSummary, AccountRuntime, BatchState, current_unix_ms, ensure_authenticated,
-    format_amount, print_account_reward_summary, run_account_task_until_complete, with_auth_retry,
+    format_amount, print_account_reward_summary, run_account_task_until_complete,
     with_auth_retry_api_until_success,
 };
 
@@ -183,9 +183,13 @@ fn run_account(
         current_unix_ms(),
     )?;
 
-    let config = with_auth_retry(state, runtime, |client, auth_token| {
-        client.get_puzzle_15_config(auth_token)
-    })?;
+    let config = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle15 config",
+        |client, auth_token| client.get_puzzle_15_config(auth_token),
+    )?;
     let difficulties = difficulty_order(&config);
     state.lock().unwrap().log.line_fmt(format_args!(
         "账号 {} 已准备好：华容道包含 {} 难度，最多可同时进行 {} 局，最小操作间隔 {}ms。",
@@ -430,7 +434,7 @@ fn run_difficulty(
                     )));
                 }
                 Err(error) if is_active_session_error(&error.to_string()) => {
-                    let history = fetch_history(state, runtime)?;
+                    let history = fetch_history(cancel_flag, state, runtime)?;
                     *used_today = used_today_by_difficulty(&history);
                     let Some(item) = history
                         .items
@@ -525,12 +529,17 @@ fn start_new_round(
 }
 
 fn fetch_history(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
 ) -> io::Result<Puzzle15HistoryResponse> {
-    with_auth_retry(state, runtime, |client, auth_token| {
-        client.get_puzzle_15_history(auth_token)
-    })
+    with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle15 history",
+        |client, auth_token| client.get_puzzle_15_history(auth_token),
+    )
 }
 
 fn fetch_me(

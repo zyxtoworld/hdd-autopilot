@@ -29,8 +29,8 @@ use self::log::{
     localized_difficulty, localized_difficulty_list, log_round_result,
 };
 use self::round::{
-    RoundProgress, merge_round_into_summary, next_round_index_for_new_round, normalize_round_total,
-    play_round, remaining_plays, total_round_count,
+    RoundPlayContext, RoundProgress, merge_round_into_summary, next_round_index_for_new_round,
+    normalize_round_total, play_round, remaining_plays, total_round_count,
 };
 use self::snapshot::history_item_to_start_response;
 
@@ -384,16 +384,20 @@ fn drain_pending_sessions(
             item.session_id,
         ));
         let start = history_item_to_start_response(&item);
+        let remaining_after = *remaining_by_difficulty.get(&item.difficulty).unwrap_or(&0);
         let result = play_round(
             cancel_flag,
             state,
             runtime,
             config,
             &start,
-            true,
-            RoundProgress {
-                current: round_index,
-                total: round_total,
+            RoundPlayContext {
+                continued: true,
+                progress: RoundProgress {
+                    current: round_index,
+                    total: round_total,
+                },
+                remaining_after,
             },
         )?;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
@@ -501,7 +505,23 @@ fn run_difficulty(
             "tile start",
             |client, auth_token| client.start_game(auth_token, difficulty),
         )?;
-        let result = play_round(cancel_flag, state, runtime, config, &start, false, progress)?;
+        let remaining_after = start
+            .daily_plays_remaining
+            .get(difficulty)
+            .copied()
+            .unwrap_or_else(|| (remaining - played - 1).max(0));
+        let result = play_round(
+            cancel_flag,
+            state,
+            runtime,
+            config,
+            &start,
+            RoundPlayContext {
+                continued: false,
+                progress,
+                remaining_after,
+            },
+        )?;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
         log_round_result(&state.lock().unwrap().log, &result);
         merge_round_into_cache(run_state.progress_cache, runtime.email(), &result);

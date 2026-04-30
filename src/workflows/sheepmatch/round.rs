@@ -9,7 +9,8 @@ use crate::model::{
 };
 use crate::ui;
 use crate::workflows::common::{
-    current_unix_ms, humanize_retryable_api_error, is_pending_round_status, is_retryable_api_error,
+    API_RETRY_MAX_ATTEMPTS, current_unix_ms, humanize_retryable_api_error, is_pending_round_status,
+    is_retryable_api_error,
 };
 
 use super::auth::{with_auth_retry_api, with_auth_retry_until_success};
@@ -28,25 +29,33 @@ pub(super) struct RoundProgress {
     pub(super) total: i32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RoundPlayContext {
+    pub(super) continued: bool,
+    pub(super) progress: RoundProgress,
+    pub(super) remaining_after: i32,
+}
+
 pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     config: &ConfigResponse,
     start: &StartResponse,
-    continued: bool,
-    progress: RoundProgress,
+    context: RoundPlayContext,
 ) -> io::Result<RoundResultSummary> {
     let started = Instant::now();
     let mut snapshot = snapshot_from_start_response(start);
     let used_powerups = Vec::new();
     let click_queue = fixed_click_queue(&snapshot);
+    let RoundPlayContext {
+        continued,
+        progress,
+        remaining_after,
+    } = context;
 
     if click_queue.is_empty() {
         if is_solved(&snapshot) {
-            let remaining_after =
-                remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty)
-                    .unwrap_or_default();
             return Ok(RoundResultSummary {
                 email: runtime.email().to_string(),
                 difficulty: snapshot.difficulty.clone(),
@@ -80,9 +89,6 @@ pub(super) fn play_round(
     for tile_id in click_queue {
         ui::check_cancel(cancel_flag)?;
         if is_solved(&snapshot) {
-            let remaining_after =
-                remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty)
-                    .unwrap_or_default();
             return Ok(RoundResultSummary {
                 email: runtime.email().to_string(),
                 difficulty: snapshot.difficulty.clone(),
@@ -129,18 +135,19 @@ pub(super) fn play_round(
                 }) if is_slot_full_error(&message) || is_stale_click_error(&message) => {
                     break Err(io::Error::other(message));
                 }
-                Err(ApiError::HttpStatus { .. }) => {
-                    ui::sleep_with_cancel(cancel_flag, STEP_RETRY_BACKOFF)?;
-                    continue;
-                }
                 Err(error) if is_retryable_step_transport_error(&error) => {
-                    if step_attempts == 1 || step_attempts.is_multiple_of(STEP_RETRY_LOG_EVERY) {
-                        state.lock().unwrap().log.line_fmt(format_args!(
-                            "账号 {} 的羊了个羊卡在第 {} 步，接口暂时连不上，会等接口恢复后继续（第 {} 次尝试）：{}",
-                            runtime.email(),
+                    log_step_retry(
+                        state,
+                        runtime.email(),
+                        snapshot.move_count + 1,
+                        step_attempts,
+                        &error,
+                    );
+                    if step_attempts >= API_RETRY_MAX_ATTEMPTS {
+                        return Err(step_retry_exhausted_error(
                             snapshot.move_count + 1,
                             step_attempts,
-                            humanize_retryable_api_error(&error)
+                            &error,
                         ));
                     }
                     ui::sleep_with_cancel(cancel_flag, STEP_RETRY_BACKOFF)?;
@@ -152,8 +159,6 @@ pub(super) fn play_round(
         match response {
             Ok(step) => {
                 let email = runtime.email().to_string();
-                let remaining_after =
-                    remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty).unwrap_or(0);
                 let result = build_round_from_step(
                     &email,
                     &snapshot,
@@ -200,8 +205,6 @@ pub(super) fn play_round(
     }
 
     if is_solved(&snapshot) {
-        let remaining_after =
-            remaining_plays(cancel_flag, state, runtime, &snapshot.difficulty).unwrap_or_default();
         return Ok(RoundResultSummary {
             email: runtime.email().to_string(),
             difficulty: snapshot.difficulty.clone(),
@@ -235,6 +238,36 @@ pub(super) fn play_round(
 
 fn is_retryable_step_transport_error(error: &ApiError) -> bool {
     is_retryable_api_error(error)
+}
+
+fn log_step_retry(
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    step_number: i32,
+    attempts: usize,
+    error: &ApiError,
+) {
+    if attempts == 1 || attempts.is_multiple_of(STEP_RETRY_LOG_EVERY) {
+        state.lock().unwrap().log.line_fmt(format_args!(
+            "账号 {} 的羊了个羊卡在第 {} 步，接口暂时连不上，会等接口恢复后继续（第 {} 次尝试）：{}",
+            email,
+            step_number.max(1),
+            attempts,
+            humanize_retryable_api_error(error)
+        ));
+    }
+}
+
+fn step_retry_exhausted_error(step_number: i32, attempts: usize, error: &ApiError) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "羊了个羊卡在第 {} 步，接口连续重试 {} 次仍失败，准备重新进入玩法续残局：{}",
+            step_number.max(1),
+            attempts,
+            humanize_retryable_api_error(error)
+        ),
+    )
 }
 
 fn is_terminal_round_status(status: &str) -> bool {

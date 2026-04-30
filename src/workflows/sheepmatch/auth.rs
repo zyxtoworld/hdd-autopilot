@@ -8,7 +8,9 @@ use crate::storage::{
     build_authorization, cache_from_login, get_session, password_usable, upsert_session,
 };
 use crate::ui;
-use crate::workflows::common::{humanize_retryable_api_error, is_retryable_api_error};
+use crate::workflows::common::{
+    API_RETRY_MAX_ATTEMPTS, humanize_retryable_api_error, is_retryable_api_error,
+};
 
 use super::{AccountRuntime, BatchState};
 
@@ -182,6 +184,16 @@ where
                         humanize_retryable_api_error(&error)
                     ));
                 }
+                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                    state.lock().unwrap().log.line_fmt(format_args!(
+                        "账号 {} 的{}连续重试 {} 次仍失败，准备重新进入玩法续残局：{}",
+                        runtime.email(),
+                        localized_retry_operation(operation),
+                        attempts,
+                        humanize_retryable_api_error(&error)
+                    ));
+                    return Err(retry_exhausted_error(operation, attempts, &error));
+                }
                 ui::sleep_with_cancel(cancel_flag, API_RETRY_BACKOFF)?;
             }
             Err(error) => return Err(api_error_to_io_error(error)),
@@ -191,6 +203,18 @@ where
 
 fn api_error_to_io_error(error: ApiError) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+fn retry_exhausted_error(operation: &str, attempts: usize, error: &ApiError) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "{}连续重试 {} 次仍失败，准备重新进入玩法续残局：{}",
+            localized_retry_operation(operation),
+            attempts,
+            humanize_retryable_api_error(error)
+        ),
+    )
 }
 
 fn localized_retry_operation(operation: &str) -> &'static str {

@@ -47,6 +47,7 @@ impl ApiClient {
         };
         let http_client = Client::builder()
             .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build reqwest client");
         Self {

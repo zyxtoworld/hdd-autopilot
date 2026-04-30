@@ -8,7 +8,9 @@ use crate::storage::{
     build_authorization, cache_from_login, get_session, password_usable, upsert_session,
 };
 use crate::ui;
-use crate::workflows::common::{humanize_retryable_api_error, is_retryable_api_error};
+use crate::workflows::common::{
+    API_RETRY_MAX_ATTEMPTS, humanize_retryable_api_error, is_retryable_api_error,
+};
 
 use super::{AccountRuntime, BatchState};
 
@@ -49,6 +51,22 @@ where
                         runtime.email(),
                         attempts,
                         humanize_retryable_api_error(&error)
+                    ));
+                }
+                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                    state.lock().unwrap().log.line_fmt(format_args!(
+                        "账号 {} 的刮刮乐接口连续重试 {} 次仍失败，准备重新进入玩法：{}",
+                        runtime.email(),
+                        attempts,
+                        humanize_retryable_api_error(&error)
+                    ));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "刮刮乐接口连续重试 {} 次仍失败，准备重新进入玩法：{}",
+                            attempts,
+                            humanize_retryable_api_error(&error)
+                        ),
                     ));
                 }
                 ui::sleep_with_cancel(cancel_flag, API_RETRY_BACKOFF)?;

@@ -160,6 +160,9 @@ pub(super) fn play_round(
                 solver.remember_many(&snapshot.currently_revealed);
             }
             Err(error) => {
+                if error.kind() == io::ErrorKind::TimedOut {
+                    return Err(error);
+                }
                 if is_game_already_finished_error(&error.to_string()) {
                     return Ok(build_round_summary(
                         runtime.email(),

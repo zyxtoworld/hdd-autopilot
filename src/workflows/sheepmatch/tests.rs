@@ -15,7 +15,9 @@ use crate::storage::{cache_from_login, get_session};
 
 use super::auth::{ensure_authenticated, with_auth_retry};
 use super::log::localized_difficulty_list;
-use super::round::{RoundProgress, merge_round_into_summary, play_round, remaining_plays};
+use super::round::{
+    RoundPlayContext, RoundProgress, merge_round_into_summary, play_round, remaining_plays,
+};
 use super::snapshot::{
     collect_tile_ids, fixed_click_queue, history_item_to_start_response,
     snapshot_from_start_response, snapshot_from_step_response,
@@ -113,11 +115,16 @@ fn continued_round_uses_same_fixed_queue_rule() {
 fn play_round_consumes_fixed_initial_queue_without_replanning() {
     let requested_tile_ids = Arc::new(Mutex::new(Vec::<i32>::new()));
     let requested_tile_ids_for_server = Arc::clone(&requested_tile_ids);
+    let me_calls = Arc::new(AtomicUsize::new(0));
+    let me_calls_for_server = Arc::clone(&me_calls);
     let server = TestServer::start(move |request| match request.path.as_str() {
-        "/tile-api/me" => ResponseSpec::json(
-            200,
-            r#"{"active_session":null,"authenticated":true,"daily_plays_remaining":{"easy":1},"daily_plays_used":{"easy":0},"server_now_ms":1777006766099,"user":{"balance":12.34,"email":"demo@example.com","id":1,"status":"active"}}"#,
-        ),
+        "/tile-api/me" => {
+            me_calls_for_server.fetch_add(1, Ordering::SeqCst);
+            ResponseSpec::json(
+                200,
+                r#"{"active_session":null,"authenticated":true,"daily_plays_remaining":{"easy":1},"daily_plays_used":{"easy":0},"server_now_ms":1777006766099,"user":{"balance":12.34,"email":"demo@example.com","id":1,"status":"active"}}"#,
+            )
+        }
         "/tile-api/step" => {
             let step: StepRequest = serde_json::from_str(&request.body).unwrap();
             requested_tile_ids_for_server
@@ -193,15 +200,19 @@ fn play_round_consumes_fixed_initial_queue_without_replanning() {
             ..ConfigResponse::default()
         },
         &start,
-        false,
-        RoundProgress {
-            current: 1,
-            total: 1,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
         },
     )
     .unwrap();
 
     assert_eq!(*requested_tile_ids.lock().unwrap(), vec![9, 5, 2]);
+    assert_eq!(me_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         result.error_message,
         "这一局的可点击步骤已经用完，但服务端仍显示未通关。"
@@ -277,10 +288,13 @@ fn play_round_retries_same_step_until_http_200() {
             ..ConfigResponse::default()
         },
         &start,
-        false,
-        RoundProgress {
-            current: 1,
-            total: 1,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
         },
     )
     .unwrap();
@@ -359,10 +373,13 @@ fn play_round_retries_step_transport_error_until_http_200() {
             ..ConfigResponse::default()
         },
         &start,
-        false,
-        RoundProgress {
-            current: 1,
-            total: 1,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
         },
     )
     .unwrap();
@@ -371,6 +388,77 @@ fn play_round_retries_step_transport_error_until_http_200() {
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
     assert_eq!(result.status, "won");
     assert!(result.error_message.is_empty());
+}
+
+#[test]
+fn play_round_returns_thread_retry_error_after_repeated_step_transport_errors() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempts_for_server = Arc::clone(&attempts);
+    let server = TestServer::start(move |request| match request.path.as_str() {
+        "/tile-api/step" => {
+            attempts_for_server.fetch_add(1, Ordering::SeqCst);
+            ResponseSpec::drop_connection()
+        }
+        _ => ResponseSpec::json(404, r#"{"message":"not found"}"#),
+    });
+    let temp = tempdir().unwrap();
+    let state = Arc::new(Mutex::new(BatchState {
+        config: AuthConfig {
+            base_url: server.base_url().to_string(),
+            accounts: vec![],
+        },
+        auth_cache_file: None,
+        result_log_dir: temp.path().join("log"),
+        log: crate::ui::TaskLog::stdout(),
+    }));
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let mut runtime = AccountRuntime {
+        api_client: ApiClient::new(server.base_url()),
+        account: AuthCache {
+            email: "demo@example.com".to_string(),
+            ..AuthCache::default()
+        },
+        auth_token: "Bearer test-token".to_string(),
+    };
+    let start = StartResponse {
+        difficulty: "easy".to_string(),
+        session_id: 42,
+        slot_limit: 7,
+        status: "pending".to_string(),
+        tiles: vec![Tile {
+            id: 9,
+            pattern: "B".to_string(),
+            ..Tile::default()
+        }],
+        ..StartResponse::default()
+    };
+
+    let error = play_round(
+        &cancel_flag,
+        &state,
+        &mut runtime,
+        &ConfigResponse {
+            min_interval_ms: 0,
+            ..ConfigResponse::default()
+        },
+        &start,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        crate::workflows::common::API_RETRY_MAX_ATTEMPTS
+    );
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("卡在第 1 步"));
 }
 
 #[test]
@@ -443,10 +531,13 @@ fn play_round_stops_when_step_status_is_lost() {
             ..ConfigResponse::default()
         },
         &start,
-        false,
-        RoundProgress {
-            current: 1,
-            total: 1,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
         },
     )
     .unwrap();
@@ -516,10 +607,13 @@ fn play_round_reports_http_409_slot_full_as_failure() {
             ..ConfigResponse::default()
         },
         &start,
-        false,
-        RoundProgress {
-            current: 1,
-            total: 1,
+        RoundPlayContext {
+            continued: false,
+            progress: RoundProgress {
+                current: 1,
+                total: 1,
+            },
+            remaining_after: 0,
         },
     )
     .unwrap();

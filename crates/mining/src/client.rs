@@ -125,6 +125,7 @@ impl MiningClient {
         Ok(Client::builder()
             .default_headers(headers)
             .timeout(timeout)
+            .connect_timeout(timeout.min(Duration::from_secs(10)))
             .cookie_store(true)
             .build()?)
     }
