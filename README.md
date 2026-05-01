@@ -58,7 +58,7 @@ macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-x86_
 5. 返回上一级菜单
 6. 退出脚本
 
-默认走自动调优模式，不要求用户手动选择 CPU / GPU。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底；普通自动调优会同时启动 CPU 调优和 GPU 调优。GPU 调优会读取显卡显存、单次最大分配、计算单元、线程组限制、本地/共享内存、子组/warp 大小，以及 OpenCL/Metal 暴露的统一内存、低功耗和外接属性，先生成适配当前任务内存成本和显卡形态的候选 batch / segment / precompute 策略，再实测选择最快配置。运行时会选择最快 CPU，并把去重后的多张 GPU 一起参与挖矿，避免同一张卡同时被 CUDA/OpenCL 或 Metal/OpenCL 重复占用。
+默认走自动调优模式，不要求用户手动选择 CPU / GPU，也不暴露手动选择挖矿后端的入口。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底；普通自动调优会同时启动 CPU 调优和 GPU 调优。GPU 调优会读取显卡显存、单次最大分配、计算单元、线程组限制、本地/共享内存、子组/warp 大小，以及 OpenCL/Metal 暴露的统一内存、低功耗和外接属性，先生成适配当前任务内存成本和显卡形态的候选 batch / segment / precompute 策略，再实测选择最快配置。运行时会选择最快 CPU，并把去重后的多张 GPU 一起参与挖矿，避免同一张卡同时被 CUDA/OpenCL 或 Metal/OpenCL 重复占用。
 
 当前 Rust 接入的计算后端：
 

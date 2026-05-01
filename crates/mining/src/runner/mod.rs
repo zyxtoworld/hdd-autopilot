@@ -125,7 +125,7 @@ impl Runner {
         ));
         self.print_output_paths();
 
-        self.run_loop(true)
+        self.run_loop(false)
     }
 
     fn print_output_paths(&self) {
