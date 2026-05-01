@@ -9,11 +9,13 @@ use crate::backend::cpu::{ComputeJob, benchmark_job_for_shape, compute_digest, h
 use crate::backend::cuda::{GPU_DEVICE_SCREENING_DURATION, GPU_RUNTIME_BENCHMARK_DURATION};
 use crate::backend::types::{
     BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, GpuBenchmarkConfig,
-    GpuMiningSessionConfig, MineBlockResult, MineResult,
+    GpuDeviceProfile, GpuMiningSessionConfig, MineBlockResult, MineResult,
+    recommended_gpu_tuning_shapes,
 };
 use crate::error::{MiningError, interrupted_error};
 
-const METAL_SOLVER_TEMPLATES: [MetalSolverConfig; 27] = [
+#[allow(dead_code)]
+const METAL_SOLVER_TEMPLATES: [MetalSolverConfig; 33] = [
     MetalSolverConfig {
         batch_size: 1,
         by_segment: false,
@@ -60,6 +62,16 @@ const METAL_SOLVER_TEMPLATES: [MetalSolverConfig; 27] = [
         precompute_refs: false,
     },
     MetalSolverConfig {
+        batch_size: 512,
+        by_segment: false,
+        precompute_refs: false,
+    },
+    MetalSolverConfig {
+        batch_size: 1024,
+        by_segment: false,
+        precompute_refs: false,
+    },
+    MetalSolverConfig {
         batch_size: 1,
         by_segment: true,
         precompute_refs: false,
@@ -105,6 +117,16 @@ const METAL_SOLVER_TEMPLATES: [MetalSolverConfig; 27] = [
         precompute_refs: false,
     },
     MetalSolverConfig {
+        batch_size: 512,
+        by_segment: true,
+        precompute_refs: false,
+    },
+    MetalSolverConfig {
+        batch_size: 1024,
+        by_segment: true,
+        precompute_refs: false,
+    },
+    MetalSolverConfig {
         batch_size: 1,
         by_segment: true,
         precompute_refs: true,
@@ -146,6 +168,16 @@ const METAL_SOLVER_TEMPLATES: [MetalSolverConfig; 27] = [
     },
     MetalSolverConfig {
         batch_size: 256,
+        by_segment: true,
+        precompute_refs: true,
+    },
+    MetalSolverConfig {
+        batch_size: 512,
+        by_segment: true,
+        precompute_refs: true,
+    },
+    MetalSolverConfig {
+        batch_size: 1024,
         by_segment: true,
         precompute_refs: true,
     },
@@ -205,8 +237,24 @@ impl MetalBackend {
         Self
     }
 
+    #[allow(dead_code)]
     pub fn solver_templates() -> &'static [MetalSolverConfig] {
         &METAL_SOLVER_TEMPLATES
+    }
+
+    pub fn solver_templates_for_descriptor(
+        &self,
+        descriptor: &BackendDescriptor,
+        job: &ComputeJob,
+    ) -> Vec<MetalSolverConfig> {
+        recommended_gpu_tuning_shapes(descriptor.gpu_profile, job.memory_cost_kib, job.parallelism)
+            .into_iter()
+            .map(|shape| MetalSolverConfig {
+                batch_size: shape.batch_size,
+                by_segment: shape.by_segment,
+                precompute_refs: shape.precompute_refs,
+            })
+            .collect()
     }
 
     pub fn descriptor_for_device(&self, device: &MetalDeviceInfo) -> BackendDescriptor {
@@ -215,6 +263,19 @@ impl MetalBackend {
             name: device.name.clone(),
             device_id: device.device_id.clone(),
             device_index: Some(device.device_index),
+            gpu_profile: Some(GpuDeviceProfile {
+                global_memory_bytes: device
+                    .recommended_working_set_bytes
+                    .max(device.max_buffer_bytes),
+                max_alloc_bytes: device.max_buffer_bytes,
+                compute_units: 0,
+                max_threads_per_group: device.max_threads_per_group,
+                local_memory_bytes: device.max_threadgroup_memory_bytes,
+                subgroup_size: 0,
+                unified_memory: device.unified_memory,
+                low_power: device.low_power,
+                removable: device.removable,
+            }),
         }
     }
 
@@ -294,8 +355,8 @@ impl MetalBackend {
         let device_index = descriptor.device_index.unwrap_or(0);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut best: Option<BenchmarkResult> = None;
-        for candidate in METAL_SOLVER_TEMPLATES {
-            let result = self.run_runtime_loop_benchmark_with_cancel(
+        for candidate in self.solver_templates_for_descriptor(descriptor, job) {
+            let Ok(result) = self.run_runtime_loop_benchmark_with_cancel(
                 job,
                 GpuBenchmarkConfig {
                     device_index,
@@ -305,7 +366,9 @@ impl MetalBackend {
                     duration: GPU_RUNTIME_BENCHMARK_DURATION,
                 },
                 &cancel,
-            )?;
+            ) else {
+                continue;
+            };
             if best
                 .as_ref()
                 .is_none_or(|current| result.attempts_per_s > current.attempts_per_s)

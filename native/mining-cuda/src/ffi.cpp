@@ -88,6 +88,12 @@ void fill_device_info(std::size_t device_index, mining_cuda_device_info* result)
     cudaGetDeviceProperties(&prop, static_cast<int>(device_index));
 
     result->device_index = device_index;
+    result->global_memory_bytes = static_cast<std::uint64_t>(prop.totalGlobalMem);
+    result->max_alloc_bytes = static_cast<std::uint64_t>(prop.totalGlobalMem);
+    result->compute_units = static_cast<std::uint32_t>(std::max(prop.multiProcessorCount, 0));
+    result->max_threads_per_block = static_cast<std::uint32_t>(std::max(prop.maxThreadsPerBlock, 0));
+    result->warp_size = static_cast<std::uint32_t>(std::max(prop.warpSize, 0));
+    result->shared_memory_per_block_bytes = static_cast<std::uint64_t>(prop.sharedMemPerBlock);
     std::fill(std::begin(result->device_id), std::end(result->device_id), '\0');
     std::fill(std::begin(result->name), std::end(result->name), '\0');
 

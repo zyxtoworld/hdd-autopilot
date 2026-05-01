@@ -9,11 +9,13 @@ use crate::backend::cpu::{ComputeJob, benchmark_job_for_shape, compute_digest, h
 use crate::backend::cuda::{GPU_DEVICE_SCREENING_DURATION, GPU_RUNTIME_BENCHMARK_DURATION};
 use crate::backend::types::{
     BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, GpuBenchmarkConfig,
-    GpuMiningSessionConfig, MineBlockResult, MineResult,
+    GpuDeviceProfile, GpuMiningSessionConfig, MineBlockResult, MineResult,
+    recommended_gpu_tuning_shapes,
 };
 use crate::error::{MiningError, interrupted_error};
 
-const OPENCL_SOLVER_TEMPLATES: [OpenclSolverConfig; 27] = [
+#[allow(dead_code)]
+const OPENCL_SOLVER_TEMPLATES: [OpenclSolverConfig; 33] = [
     OpenclSolverConfig {
         batch_size: 1,
         by_segment: false,
@@ -60,6 +62,16 @@ const OPENCL_SOLVER_TEMPLATES: [OpenclSolverConfig; 27] = [
         precompute_refs: false,
     },
     OpenclSolverConfig {
+        batch_size: 512,
+        by_segment: false,
+        precompute_refs: false,
+    },
+    OpenclSolverConfig {
+        batch_size: 1024,
+        by_segment: false,
+        precompute_refs: false,
+    },
+    OpenclSolverConfig {
         batch_size: 1,
         by_segment: true,
         precompute_refs: false,
@@ -105,6 +117,16 @@ const OPENCL_SOLVER_TEMPLATES: [OpenclSolverConfig; 27] = [
         precompute_refs: false,
     },
     OpenclSolverConfig {
+        batch_size: 512,
+        by_segment: true,
+        precompute_refs: false,
+    },
+    OpenclSolverConfig {
+        batch_size: 1024,
+        by_segment: true,
+        precompute_refs: false,
+    },
+    OpenclSolverConfig {
         batch_size: 1,
         by_segment: true,
         precompute_refs: true,
@@ -146,6 +168,16 @@ const OPENCL_SOLVER_TEMPLATES: [OpenclSolverConfig; 27] = [
     },
     OpenclSolverConfig {
         batch_size: 256,
+        by_segment: true,
+        precompute_refs: true,
+    },
+    OpenclSolverConfig {
+        batch_size: 512,
+        by_segment: true,
+        precompute_refs: true,
+    },
+    OpenclSolverConfig {
+        batch_size: 1024,
         by_segment: true,
         precompute_refs: true,
     },
@@ -205,8 +237,24 @@ impl OpenclBackend {
         Self
     }
 
+    #[allow(dead_code)]
     pub fn solver_templates() -> &'static [OpenclSolverConfig] {
         &OPENCL_SOLVER_TEMPLATES
+    }
+
+    pub fn solver_templates_for_descriptor(
+        &self,
+        descriptor: &BackendDescriptor,
+        job: &ComputeJob,
+    ) -> Vec<OpenclSolverConfig> {
+        recommended_gpu_tuning_shapes(descriptor.gpu_profile, job.memory_cost_kib, job.parallelism)
+            .into_iter()
+            .map(|shape| OpenclSolverConfig {
+                batch_size: shape.batch_size,
+                by_segment: shape.by_segment,
+                precompute_refs: shape.precompute_refs,
+            })
+            .collect()
     }
 
     pub fn descriptor_for_device(&self, device: &OpenclDeviceInfo) -> BackendDescriptor {
@@ -216,6 +264,17 @@ impl OpenclBackend {
             name,
             device_id: device.device_id.clone(),
             device_index: Some(device.device_index),
+            gpu_profile: Some(GpuDeviceProfile {
+                global_memory_bytes: device.global_memory_bytes,
+                max_alloc_bytes: device.max_alloc_bytes,
+                compute_units: device.compute_units,
+                max_threads_per_group: device.max_work_group_size,
+                local_memory_bytes: device.local_memory_bytes,
+                subgroup_size: 0,
+                unified_memory: device.host_unified_memory,
+                low_power: false,
+                removable: false,
+            }),
         }
     }
 
@@ -296,8 +355,8 @@ impl OpenclBackend {
         let device_index = descriptor.device_index.unwrap_or(0);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut best: Option<BenchmarkResult> = None;
-        for candidate in OPENCL_SOLVER_TEMPLATES {
-            let result = self.run_runtime_loop_benchmark_with_cancel(
+        for candidate in self.solver_templates_for_descriptor(descriptor, job) {
+            let Ok(result) = self.run_runtime_loop_benchmark_with_cancel(
                 job,
                 GpuBenchmarkConfig {
                     device_index,
@@ -307,7 +366,9 @@ impl OpenclBackend {
                     duration: GPU_RUNTIME_BENCHMARK_DURATION,
                 },
                 &cancel,
-            )?;
+            ) else {
+                continue;
+            };
             if best
                 .as_ref()
                 .is_none_or(|current| result.attempts_per_s > current.attempts_per_s)
@@ -353,7 +414,7 @@ impl OpenclBackend {
             precompute_refs,
             duration,
         } = config;
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             let _ = (
                 device_index,
@@ -368,7 +429,7 @@ impl OpenclBackend {
                 "当前平台未启用 OpenCL 后端。".to_string(),
             ))
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         {
             let config = OpenclSolverConfig {
                 batch_size: batch_size.max(1),
@@ -450,7 +511,7 @@ impl OpenclBackend {
 }
 
 fn opencl_platform_supported() -> bool {
-    matches!(std::env::consts::OS, "macos" | "linux")
+    matches!(std::env::consts::OS, "macos" | "linux" | "windows")
 }
 
 fn opencl_device_display_name(device: &OpenclDeviceInfo) -> String {

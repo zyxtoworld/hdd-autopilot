@@ -119,6 +119,12 @@ void fill_device_info(std::size_t device_index, mining_opencl_device_info* resul
 
     result->device_index = device_index;
     result->device_type = static_cast<std::uint64_t>(device_type);
+    result->global_memory_bytes = static_cast<std::uint64_t>(cl_device.getInfo<CL_DEVICE_GLOBAL_MEM_SIZE>());
+    result->max_alloc_bytes = static_cast<std::uint64_t>(cl_device.getInfo<CL_DEVICE_MAX_MEM_ALLOC_SIZE>());
+    result->compute_units = static_cast<std::uint32_t>(cl_device.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>());
+    result->max_work_group_size = static_cast<std::uint32_t>(cl_device.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>());
+    result->local_memory_bytes = static_cast<std::uint64_t>(cl_device.getInfo<CL_DEVICE_LOCAL_MEM_SIZE>());
+    result->host_unified_memory = cl_device.getInfo<CL_DEVICE_HOST_UNIFIED_MEMORY>() != 0;
 
     const auto device_id = std::string("opencl:") + std::to_string(device_index);
     const auto name = device.getName();

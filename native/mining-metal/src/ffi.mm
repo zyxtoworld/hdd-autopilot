@@ -83,6 +83,16 @@ void fill_device_info(std::size_t device_index, mining_metal_device_info* result
     }
     const auto device = devices[device_index];
     result->device_index = device_index;
+    result->recommended_working_set_bytes = 0;
+    if ([device respondsToSelector:@selector(recommendedMaxWorkingSetSize)]) {
+        result->recommended_working_set_bytes = static_cast<std::uint64_t>(device.recommendedMaxWorkingSetSize);
+    }
+    result->max_buffer_bytes = static_cast<std::uint64_t>(device.maxBufferLength);
+    result->max_threadgroup_memory_bytes = static_cast<std::uint64_t>(device.maxThreadgroupMemoryLength);
+    result->max_threads_per_group = device.isLowPower ? 512 : 1024;
+    result->unified_memory = device.hasUnifiedMemory;
+    result->low_power = device.isLowPower;
+    result->removable = device.isRemovable;
     std::fill(std::begin(result->device_id), std::end(result->device_id), '\0');
     std::fill(std::begin(result->name), std::end(result->name), '\0');
     const auto device_id = std::string("metal:") + std::to_string(static_cast<unsigned long long>(device.registryID));

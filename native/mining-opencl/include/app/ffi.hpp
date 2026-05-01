@@ -47,6 +47,12 @@ struct mining_opencl_mine_result {
 struct mining_opencl_device_info {
     std::size_t device_index;
     std::uint64_t device_type;
+    std::uint64_t global_memory_bytes;
+    std::uint64_t max_alloc_bytes;
+    std::uint32_t compute_units;
+    std::uint32_t max_work_group_size;
+    std::uint64_t local_memory_bytes;
+    bool host_unified_memory;
     char device_id[32];
     char name[128];
     char vendor[128];

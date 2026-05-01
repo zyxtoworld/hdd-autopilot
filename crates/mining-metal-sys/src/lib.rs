@@ -49,6 +49,13 @@ pub struct mining_metal_mine_result {
 #[repr(C)]
 pub struct mining_metal_device_info {
     pub device_index: usize,
+    pub recommended_working_set_bytes: u64,
+    pub max_buffer_bytes: u64,
+    pub max_threadgroup_memory_bytes: u64,
+    pub max_threads_per_group: u32,
+    pub unified_memory: bool,
+    pub low_power: bool,
+    pub removable: bool,
     pub device_id: [u8; 64],
     pub name: [u8; 128],
 }
@@ -78,6 +85,13 @@ pub struct MetalJob<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetalDeviceInfo {
     pub device_index: usize,
+    pub recommended_working_set_bytes: u64,
+    pub max_buffer_bytes: u64,
+    pub max_threadgroup_memory_bytes: u64,
+    pub max_threads_per_group: u32,
+    pub unified_memory: bool,
+    pub low_power: bool,
+    pub removable: bool,
     pub device_id: String,
     pub name: String,
 }
@@ -214,6 +228,13 @@ pub fn list_devices() -> Result<Vec<MetalDeviceInfo>, String> {
         for device_index in 0..count {
             let mut raw = mining_metal_device_info {
                 device_index,
+                recommended_working_set_bytes: 0,
+                max_buffer_bytes: 0,
+                max_threadgroup_memory_bytes: 0,
+                max_threads_per_group: 0,
+                unified_memory: false,
+                low_power: false,
+                removable: false,
                 device_id: [0; 64],
                 name: [0; 128],
             };
@@ -222,6 +243,13 @@ pub fn list_devices() -> Result<Vec<MetalDeviceInfo>, String> {
             }
             devices.push(MetalDeviceInfo {
                 device_index: raw.device_index,
+                recommended_working_set_bytes: raw.recommended_working_set_bytes,
+                max_buffer_bytes: raw.max_buffer_bytes,
+                max_threadgroup_memory_bytes: raw.max_threadgroup_memory_bytes,
+                max_threads_per_group: raw.max_threads_per_group,
+                unified_memory: raw.unified_memory,
+                low_power: raw.low_power,
+                removable: raw.removable,
                 device_id: decode_c_string(&raw.device_id),
                 name: decode_c_string(&raw.name),
             });

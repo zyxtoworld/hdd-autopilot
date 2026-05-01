@@ -46,6 +46,13 @@ struct mining_metal_mine_result {
 
 struct mining_metal_device_info {
     std::size_t device_index;
+    std::uint64_t recommended_working_set_bytes;
+    std::uint64_t max_buffer_bytes;
+    std::uint64_t max_threadgroup_memory_bytes;
+    std::uint32_t max_threads_per_group;
+    bool unified_memory;
+    bool low_power;
+    bool removable;
     char device_id[64];
     char name[128];
 };

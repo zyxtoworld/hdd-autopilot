@@ -159,6 +159,7 @@ impl CpuBackend {
                 name: "CPU".to_string(),
                 device_id: "cpu".to_string(),
                 device_index: None,
+                gpu_profile: None,
             },
         }
     }

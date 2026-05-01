@@ -46,6 +46,12 @@ struct mining_cuda_mine_result {
 
 struct mining_cuda_device_info {
     std::size_t device_index;
+    std::uint64_t global_memory_bytes;
+    std::uint64_t max_alloc_bytes;
+    std::uint32_t compute_units;
+    std::uint32_t max_threads_per_block;
+    std::uint32_t warp_size;
+    std::uint64_t shared_memory_per_block_bytes;
     char device_id[32];
     char name[128];
 };

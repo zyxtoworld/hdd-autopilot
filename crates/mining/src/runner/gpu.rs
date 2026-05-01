@@ -1,8 +1,6 @@
 use crate::backend::cuda::{GPU_FINALIST_COUNT, GPU_RUNTIME_BENCHMARK_DURATION};
 use crate::backend::types::GpuBenchmarkConfig;
-use crate::backend::{
-    BackendDescriptor, BenchmarkResult, ComputeJob, CudaBackend, MetalBackend, OpenclBackend,
-};
+use crate::backend::{BackendDescriptor, BenchmarkResult, ComputeJob};
 use crate::error::is_interrupted_error;
 use crate::{MiningError, humanize_error};
 
@@ -189,24 +187,22 @@ impl Runner {
         descriptor: &BackendDescriptor,
         job: &ComputeJob,
     ) -> Result<BenchmarkResult, MiningError> {
-        self.tune_gpu_backend(
-            "CUDA",
-            descriptor,
-            CudaBackend::solver_templates(),
-            |candidate| {
-                self.cuda_backend.run_runtime_loop_benchmark_with_cancel(
-                    job,
-                    GpuBenchmarkConfig {
-                        device_index: descriptor.device_index.unwrap_or(0),
-                        batch_size: candidate.batch_size,
-                        by_segment: candidate.by_segment,
-                        precompute_refs: candidate.precompute_refs,
-                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
-                    },
-                    &self.cancel,
-                )
-            },
-        )
+        let templates = self
+            .cuda_backend
+            .solver_templates_for_descriptor(descriptor, job);
+        self.tune_gpu_backend("CUDA", descriptor, &templates, |candidate| {
+            self.cuda_backend.run_runtime_loop_benchmark_with_cancel(
+                job,
+                GpuBenchmarkConfig {
+                    device_index: descriptor.device_index.unwrap_or(0),
+                    batch_size: candidate.batch_size,
+                    by_segment: candidate.by_segment,
+                    precompute_refs: candidate.precompute_refs,
+                    duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                },
+                &self.cancel,
+            )
+        })
     }
 
     fn tune_opencl_backend(
@@ -214,24 +210,22 @@ impl Runner {
         descriptor: &BackendDescriptor,
         job: &ComputeJob,
     ) -> Result<BenchmarkResult, MiningError> {
-        self.tune_gpu_backend(
-            "OpenCL",
-            descriptor,
-            OpenclBackend::solver_templates(),
-            |candidate| {
-                self.opencl_backend.run_runtime_loop_benchmark_with_cancel(
-                    job,
-                    GpuBenchmarkConfig {
-                        device_index: descriptor.device_index.unwrap_or(0),
-                        batch_size: candidate.batch_size,
-                        by_segment: candidate.by_segment,
-                        precompute_refs: candidate.precompute_refs,
-                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
-                    },
-                    &self.cancel,
-                )
-            },
-        )
+        let templates = self
+            .opencl_backend
+            .solver_templates_for_descriptor(descriptor, job);
+        self.tune_gpu_backend("OpenCL", descriptor, &templates, |candidate| {
+            self.opencl_backend.run_runtime_loop_benchmark_with_cancel(
+                job,
+                GpuBenchmarkConfig {
+                    device_index: descriptor.device_index.unwrap_or(0),
+                    batch_size: candidate.batch_size,
+                    by_segment: candidate.by_segment,
+                    precompute_refs: candidate.precompute_refs,
+                    duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                },
+                &self.cancel,
+            )
+        })
     }
 
     fn tune_metal_backend(
@@ -239,24 +233,22 @@ impl Runner {
         descriptor: &BackendDescriptor,
         job: &ComputeJob,
     ) -> Result<BenchmarkResult, MiningError> {
-        self.tune_gpu_backend(
-            "Metal",
-            descriptor,
-            MetalBackend::solver_templates(),
-            |candidate| {
-                self.metal_backend.run_runtime_loop_benchmark_with_cancel(
-                    job,
-                    GpuBenchmarkConfig {
-                        device_index: descriptor.device_index.unwrap_or(0),
-                        batch_size: candidate.batch_size,
-                        by_segment: candidate.by_segment,
-                        precompute_refs: candidate.precompute_refs,
-                        duration: GPU_RUNTIME_BENCHMARK_DURATION,
-                    },
-                    &self.cancel,
-                )
-            },
-        )
+        let templates = self
+            .metal_backend
+            .solver_templates_for_descriptor(descriptor, job);
+        self.tune_gpu_backend("Metal", descriptor, &templates, |candidate| {
+            self.metal_backend.run_runtime_loop_benchmark_with_cancel(
+                job,
+                GpuBenchmarkConfig {
+                    device_index: descriptor.device_index.unwrap_or(0),
+                    batch_size: candidate.batch_size,
+                    by_segment: candidate.by_segment,
+                    precompute_refs: candidate.precompute_refs,
+                    duration: GPU_RUNTIME_BENCHMARK_DURATION,
+                },
+                &self.cancel,
+            )
+        })
     }
 
     fn tune_gpu_backend<TConfig, FRun>(
@@ -274,7 +266,20 @@ impl Runner {
         let mut best: Option<BenchmarkResult> = None;
         for (index, candidate) in templates.iter().copied().enumerate() {
             self.check_cancel()?;
-            let result = run(candidate)?;
+            let result = match run(candidate) {
+                Ok(result) => result,
+                Err(error) if is_interrupted_error(&error) => return Err(error),
+                Err(error) => {
+                    self.log(format_args!(
+                        "{} 自动调优配置 {}/{} 不可用，已跳过：{}",
+                        label,
+                        index + 1,
+                        total_cases,
+                        humanize_error(&error)
+                    ));
+                    continue;
+                }
+            };
             self.log(format_args!(
                 "{} 自动调优结果 {}/{}：设备 {}，批大小 {}，按分段 {}，预计算参考值 {}，速度约 {:.2} 次/秒。",
                 label,

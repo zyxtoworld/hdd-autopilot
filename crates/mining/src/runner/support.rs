@@ -14,6 +14,7 @@ use crate::{ChallengeResponse, MiningError};
 pub(super) struct SelectedBackend {
     pub(super) kind: BackendKind,
     pub(super) label: &'static str,
+    pub(super) name: String,
     pub(super) device_id: String,
     pub(super) device_index: Option<usize>,
     pub(super) profile: BenchmarkResult,
@@ -29,6 +30,7 @@ impl SelectedBackend {
                 BackendKind::Metal => "Metal",
                 BackendKind::Opencl => "OpenCL",
             },
+            name: descriptor.name.clone(),
             device_id: descriptor.device_id.clone(),
             device_index: descriptor.device_index,
             profile,
@@ -76,19 +78,59 @@ pub(super) fn select_backend_workers(candidates: &[SelectedBackend]) -> Vec<Sele
     if let Some(cpu) = select_best_backend_by_kind(candidates, BackendKind::Cpu) {
         selected.push(cpu);
     }
-    if let Some(gpu) = candidates
+    let mut gpu_candidates = candidates
         .iter()
         .filter(|candidate| candidate.kind != BackendKind::Cpu)
         .cloned()
-        .max_by(|left, right| {
-            left.profile
-                .attempts_per_s
-                .total_cmp(&right.profile.attempts_per_s)
-        })
-    {
+        .collect::<Vec<_>>();
+    gpu_candidates.sort_by(|left, right| {
+        right
+            .profile
+            .attempts_per_s
+            .total_cmp(&left.profile.attempts_per_s)
+    });
+    for gpu in gpu_candidates {
+        if selected
+            .iter()
+            .any(|existing| is_duplicate_gpu_backend(existing, &gpu))
+        {
+            continue;
+        }
         selected.push(gpu);
     }
     selected
+}
+
+fn is_duplicate_gpu_backend(left: &SelectedBackend, right: &SelectedBackend) -> bool {
+    if left.kind == BackendKind::Cpu || right.kind == BackendKind::Cpu {
+        return false;
+    }
+    if left.kind == right.kind {
+        return left.device_id == right.device_id;
+    }
+    let left_name = normalized_gpu_name(left);
+    let right_name = normalized_gpu_name(right);
+    !left_name.is_empty() && left_name == right_name
+}
+
+fn normalized_gpu_name(candidate: &SelectedBackend) -> String {
+    let raw = candidate.name.trim();
+    let without_opencl_wrapper = raw
+        .strip_prefix("OpenCL Device '")
+        .and_then(|rest| rest.split_once('\'').map(|(name, _)| name))
+        .unwrap_or(raw);
+    let without_suffix = without_opencl_wrapper
+        .split(" [")
+        .next()
+        .unwrap_or(without_opencl_wrapper)
+        .split(" @ ")
+        .next()
+        .unwrap_or(without_opencl_wrapper);
+    without_suffix
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -222,6 +264,7 @@ mod tests {
                 BackendKind::Metal => "Metal",
                 BackendKind::Opencl => "OpenCL",
             },
+            name: device_id.to_string(),
             device_id: device_id.to_string(),
             device_index: match kind {
                 BackendKind::Cpu => None,
@@ -240,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn select_backend_workers_picks_best_cpu_and_gpu() {
+    fn select_backend_workers_picks_best_cpu_and_all_distinct_gpus() {
         let cpu_slow = backend(BackendKind::Cpu, "cpu:slow", 100.0, 4);
         let cpu_fast = backend(BackendKind::Cpu, "cpu:fast", 180.0, 8);
         let cuda = backend(BackendKind::Cuda, "cuda:0", 250.0, 4096);
@@ -248,11 +291,29 @@ mod tests {
 
         let selected = select_backend_workers(&[cpu_slow, cpu_fast, cuda, metal]);
 
-        assert_eq!(selected.len(), 2);
+        assert_eq!(selected.len(), 3);
         assert_eq!(selected[0].kind, BackendKind::Cpu);
         assert_eq!(selected[0].device_id, "cpu:fast");
         assert_eq!(selected[1].kind, BackendKind::Cuda);
         assert_eq!(selected[1].device_id, "cuda:0");
+        assert_eq!(selected[2].kind, BackendKind::Metal);
+        assert_eq!(selected[2].device_id, "metal:0");
+    }
+
+    #[test]
+    fn select_backend_workers_dedupes_same_gpu_across_apis() {
+        let cpu = backend(BackendKind::Cpu, "cpu:fast", 180.0, 8);
+        let mut cuda = backend(BackendKind::Cuda, "cuda:0", 260.0, 4096);
+        cuda.name = "NVIDIA GeForce RTX 4090".to_string();
+        let mut opencl = backend(BackendKind::Opencl, "opencl:0", 230.0, 4096);
+        opencl.name =
+            "OpenCL Device 'NVIDIA GeForce RTX 4090' (NVIDIA) [GPU] @ NVIDIA CUDA".to_string();
+
+        let selected = select_backend_workers(&[cpu, opencl, cuda]);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].kind, BackendKind::Cpu);
+        assert_eq!(selected[1].kind, BackendKind::Cuda);
     }
 
     #[test]

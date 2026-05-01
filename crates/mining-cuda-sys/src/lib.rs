@@ -57,6 +57,12 @@ pub struct mining_cuda_mine_result {
 #[repr(C)]
 pub struct mining_cuda_device_info {
     pub device_index: usize,
+    pub global_memory_bytes: u64,
+    pub max_alloc_bytes: u64,
+    pub compute_units: u32,
+    pub max_threads_per_block: u32,
+    pub warp_size: u32,
+    pub shared_memory_per_block_bytes: u64,
     pub device_id: [u8; 32],
     pub name: [u8; 128],
 }
@@ -86,6 +92,12 @@ pub struct CudaJob<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CudaDeviceInfo {
     pub device_index: usize,
+    pub global_memory_bytes: u64,
+    pub max_alloc_bytes: u64,
+    pub compute_units: u32,
+    pub max_threads_per_block: u32,
+    pub warp_size: u32,
+    pub shared_memory_per_block_bytes: u64,
     pub device_id: String,
     pub name: String,
 }
@@ -229,6 +241,12 @@ pub fn list_devices() -> Result<Vec<CudaDeviceInfo>, String> {
         for device_index in 0..count {
             let mut raw = mining_cuda_device_info {
                 device_index,
+                global_memory_bytes: 0,
+                max_alloc_bytes: 0,
+                compute_units: 0,
+                max_threads_per_block: 0,
+                warp_size: 0,
+                shared_memory_per_block_bytes: 0,
                 device_id: [0; 32],
                 name: [0; 128],
             };
@@ -237,6 +255,12 @@ pub fn list_devices() -> Result<Vec<CudaDeviceInfo>, String> {
             }
             devices.push(CudaDeviceInfo {
                 device_index: raw.device_index,
+                global_memory_bytes: raw.global_memory_bytes,
+                max_alloc_bytes: raw.max_alloc_bytes,
+                compute_units: raw.compute_units,
+                max_threads_per_block: raw.max_threads_per_block,
+                warp_size: raw.warp_size,
+                shared_memory_per_block_bytes: raw.shared_memory_per_block_bytes,
                 device_id: decode_c_string(&raw.device_id),
                 name: decode_c_string(&raw.name),
             });
