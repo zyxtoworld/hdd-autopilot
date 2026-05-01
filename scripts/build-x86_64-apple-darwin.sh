@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT_DIR="$ROOT/dist"
 TARGET="x86_64-apple-darwin"
 OUTPUT="$ROOT/target/$TARGET/release/hdd-autopilot"
-ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-macos-amd64"
+ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-x86_64-apple-darwin"
 STATUS_FILE="$ARTIFACT.status"
 CHECK_ONLY="${1:-}"
 ORCHESTRATED=0
@@ -48,9 +48,9 @@ resolve_apple_sdk() {
 
 print_missing_env_message() {
   if host_is_macos; then
-    echo "macOS amd64 打包环境缺失：请安装 Xcode Command Line Tools，或安装 cargo-zigbuild + zig，并确保 xcrun/SDKROOT 可提供 MacOSX.sdk。" >&2
+    echo "macOS x86_64 打包环境缺失：请安装 Xcode Command Line Tools，或安装 cargo-zigbuild + zig，并确保 xcrun/SDKROOT 可提供 MacOSX.sdk。" >&2
   else
-    echo "macOS amd64 打包环境缺失：请安装 cargo-zigbuild、zig，并设置 SDKROOT 或 APPLE_SDK_ROOT 指向可用的 MacOSX.sdk；否则请改到 macOS 主机上构建。" >&2
+    echo "macOS x86_64 打包环境缺失：请安装 cargo-zigbuild、zig，并设置 SDKROOT 或 APPLE_SDK_ROOT 指向可用的 MacOSX.sdk；否则请改到 macOS 主机上构建。" >&2
   fi
 }
 
@@ -65,7 +65,7 @@ pause_on_missing_env() {
 
 check_env() {
   if ! command -v cargo >/dev/null 2>&1; then
-    echo "macOS amd64 打包环境缺失：请先安装 Rust 工具链并确保 cargo 在 PATH 中。" >&2
+    echo "macOS x86_64 打包环境缺失：请先安装 Rust 工具链并确保 cargo 在 PATH 中。" >&2
     return 2
   fi
 
@@ -95,7 +95,7 @@ if [ -z "$PAYLOAD_LINE" ]; then
   exit 1
 fi
 TMPDIR_VALUE="${TMPDIR:-/tmp}"
-TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-autopilot-macos-amd64.XXXXXX")
+TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-autopilot-x86_64-apple-darwin.XXXXXX")
 cleanup() {
   rm -f "$TMPFILE"
 }
@@ -128,7 +128,7 @@ if ! check_env; then
 fi
 mkdir -p "$ARTIFACT_DIR"
 
-echo "正在构建 hdd-autopilot-macos-amd64..."
+echo "正在构建 hdd-autopilot-x86_64-apple-darwin..."
 rustup target add "$TARGET" >/dev/null 2>&1 || true
 BUILD_LOG="$ARTIFACT.log"
 rm -f "$BUILD_LOG" "$STATUS_FILE"
@@ -142,7 +142,7 @@ else
   cargo build --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
 fi
 if [ ! -f "$OUTPUT" ]; then
-  echo "macOS amd64 构建失败：当前环境缺少可用的 Apple 目标工具链；至少需要可用的 zig+Apple SDK，或可工作的 $TARGET C/Framework 交叉编译环境。" >&2
+  echo "macOS x86_64 构建失败：当前环境缺少可用的 Apple 目标工具链；至少需要可用的 zig+Apple SDK，或可工作的 $TARGET C/Framework 交叉编译环境。" >&2
   exit 1
 fi
 if grep -Eqi "(OpenCL|Metal) native backend disabled" "$BUILD_LOG"; then

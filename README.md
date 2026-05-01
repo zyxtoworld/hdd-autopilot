@@ -23,13 +23,13 @@ cargo run --release --bin hdd-autopilot
 
 打包后运行 `dist/` 下对应平台的产物：
 
-- `dist/hdd-autopilot-win-x64.exe`
-- `dist/hdd-autopilot-macos-amd64`
-- `dist/hdd-autopilot-macos-arm64`
-- `dist/hdd-autopilot-linux-amd64`
-- `dist/hdd-autopilot-linux-arm64`
+- `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`
+- `dist/hdd-autopilot-x86_64-apple-darwin`
+- `dist/hdd-autopilot-aarch64-apple-darwin`
+- `dist/hdd-autopilot-x86_64-unknown-linux-gnu`
+- `dist/hdd-autopilot-aarch64-unknown-linux-gnu`
 
-macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-linux-amd64` 这类命令运行；如果需要 `./dist/hdd-autopilot-linux-amd64` 直接执行，先 `chmod +x`。Linux 包优先按 glibc 2.17 目标构建，可覆盖大多数仍在维护的 glibc 发行版；非 glibc 系统如 Alpine/musl 不在这个包的兼容范围内。
+macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-x86_64-unknown-linux-gnu` 这类命令运行；如果需要 `./dist/hdd-autopilot-x86_64-unknown-linux-gnu` 直接执行，先 `chmod +x`。Linux 包优先按 glibc 2.17 目标构建，可覆盖大多数仍在维护的 glibc 发行版；非 glibc 系统如 Alpine/musl 不在这个包的兼容范围内。
 
 程序启动时会准备 `var/` 运行时目录，并尝试迁移旧版根目录数据文件。
 
@@ -63,7 +63,7 @@ macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-linu
 当前 Rust 接入的计算后端：
 
 - CPU：纯 Rust portable fallback，所有平台可用。
-- CUDA：Windows x64 原生后端；缺少 CUDA / nvcc / MSVC 等环境时降级为不可用后端。
+- CUDA：Windows x86_64 原生后端；缺少 CUDA / nvcc / MSVC 等环境时降级为不可用后端。
 - OpenCL：macOS 原生后端；仅 macOS target + macOS host 构建时启用。
 - Metal：macOS 原生后端；仅 macOS target + macOS host 构建时启用。
 
@@ -370,7 +370,7 @@ hdd-autopilot/
 │  │        ├─ mod.rs          # 挖矿主循环、心跳、提交、会话重建
 │  │        ├─ gpu.rs          # GPU 候选筛选、调优与 failover
 │  │        └─ support.rs      # 输出文件、奖励保存、共享辅助类型
-│  ├─ mining-cuda-sys/         # Windows x64 CUDA FFI；失败时降级
+│  ├─ mining-cuda-sys/         # Windows x86_64 CUDA FFI；失败时降级
 │  ├─ mining-opencl-sys/       # macOS OpenCL FFI；失败时降级
 │  └─ mining-metal-sys/        # macOS Metal FFI；失败时降级
 ├─ native/
@@ -434,21 +434,21 @@ hdd-autopilot/
 
 打包产物和构建状态平铺在 `dist/` 根目录：
 
-- `dist/hdd-autopilot-win-x64.exe`
-- `dist/hdd-autopilot-win-x64.build.log`
-- `dist/hdd-autopilot-win-x64.status`
-- `dist/hdd-autopilot-macos-amd64`
-- `dist/hdd-autopilot-macos-amd64.log`
-- `dist/hdd-autopilot-macos-amd64.status`
-- `dist/hdd-autopilot-macos-arm64`
-- `dist/hdd-autopilot-macos-arm64.log`
-- `dist/hdd-autopilot-macos-arm64.status`
-- `dist/hdd-autopilot-linux-amd64`
-- `dist/hdd-autopilot-linux-amd64.log`
-- `dist/hdd-autopilot-linux-amd64.status`
-- `dist/hdd-autopilot-linux-arm64`
-- `dist/hdd-autopilot-linux-arm64.log`
-- `dist/hdd-autopilot-linux-arm64.status`
+- `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`
+- `dist/hdd-autopilot-x86_64-pc-windows-msvc.build.log`
+- `dist/hdd-autopilot-x86_64-pc-windows-msvc.status`
+- `dist/hdd-autopilot-x86_64-apple-darwin`
+- `dist/hdd-autopilot-x86_64-apple-darwin.log`
+- `dist/hdd-autopilot-x86_64-apple-darwin.status`
+- `dist/hdd-autopilot-aarch64-apple-darwin`
+- `dist/hdd-autopilot-aarch64-apple-darwin.log`
+- `dist/hdd-autopilot-aarch64-apple-darwin.status`
+- `dist/hdd-autopilot-x86_64-unknown-linux-gnu`
+- `dist/hdd-autopilot-x86_64-unknown-linux-gnu.log`
+- `dist/hdd-autopilot-x86_64-unknown-linux-gnu.status`
+- `dist/hdd-autopilot-aarch64-unknown-linux-gnu`
+- `dist/hdd-autopilot-aarch64-unknown-linux-gnu.log`
+- `dist/hdd-autopilot-aarch64-unknown-linux-gnu.status`
 
 运行时查找打包文件时，按顺序检查：
 
@@ -461,34 +461,34 @@ hdd-autopilot/
 
 ### 单平台构建
 
-Windows x64：
+Windows x86_64：
 
 ```bat
-scripts\build-win-x64.bat
+scripts\build-x86_64-pc-windows-msvc.bat
 ```
 
-macOS amd64：
+macOS x86_64：
 
 ```bash
-bash scripts/build-macos-amd64.sh
+bash scripts/build-x86_64-apple-darwin.sh
 ```
 
-macOS arm64：
+macOS aarch64：
 
 ```bash
-bash scripts/build-macos-arm64.sh
+bash scripts/build-aarch64-apple-darwin.sh
 ```
 
-Linux amd64：
+Linux x86_64：
 
 ```bash
-bash scripts/build-linux-amd64.sh
+bash scripts/build-x86_64-unknown-linux-gnu.sh
 ```
 
-Linux arm64：
+Linux aarch64：
 
 ```bash
-bash scripts/build-linux-arm64.sh
+bash scripts/build-aarch64-unknown-linux-gnu.sh
 ```
 
 macOS / Linux 脚本支持 `--check` 和 `--orchestrated`，release 脚本内部会使用 orchestrated 模式。
@@ -509,11 +509,11 @@ bash scripts/release.sh
 
 默认会依次尝试五个平台：
 
-- Windows x64
-- macOS amd64
-- macOS arm64
-- Linux amd64
-- Linux arm64
+- Windows x86_64
+- macOS x86_64
+- macOS aarch64
+- Linux x86_64
+- Linux aarch64
 
 release 脚本会在全部目标都处理完后统一输出汇总。
 
@@ -529,21 +529,21 @@ release 脚本会在全部目标都处理完后统一输出汇总。
 
 仓库包含 `.github/workflows/release.yml`。推送 `v*` tag 或手动触发 workflow 时，会分别构建并上传：
 
-- `hdd-autopilot-win-x64.exe`
-- `hdd-autopilot-macos-amd64`
-- `hdd-autopilot-macos-arm64`
-- `hdd-autopilot-linux-amd64`
-- `hdd-autopilot-linux-arm64`
+- `hdd-autopilot-x86_64-pc-windows-msvc.exe`
+- `hdd-autopilot-x86_64-apple-darwin`
+- `hdd-autopilot-aarch64-apple-darwin`
+- `hdd-autopilot-x86_64-unknown-linux-gnu`
+- `hdd-autopilot-aarch64-unknown-linux-gnu`
 
 tag 触发时会把上述正式包上传到 GitHub Release；手动触发时只生成 Actions artifacts，方便先验证。
 
 ### 原生 GPU 后端环境
 
-- Windows CUDA：需要 Windows x64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；缺失时禁用 CUDA 后端，不影响 CPU 包。
+- Windows CUDA：需要 Windows x86_64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；缺失时禁用 CUDA 后端，不影响 CPU 包。
 - macOS OpenCL / Metal：需要 macOS host/target 和 Apple SDK；缺失时禁用对应后端，不影响基础包。
 - macOS cross/non-macOS 构建路径可使用 `cargo-zigbuild` 与 `zig`；脚本会根据环境探测可行路径。
-- Linux amd64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux amd64 host 本机 C 编译器。
-- Linux arm64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux arm64 host 本机 C 编译器。
+- Linux x86_64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux x86_64 host 本机 C 编译器。
+- Linux aarch64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux aarch64 host 本机 C 编译器。
 
 ## 开发与测试
 
@@ -609,7 +609,7 @@ Windows 下可运行：
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 ```
 
-默认 smoke 会构建并驱动 `dist/hdd-autopilot-win-x64.exe`，覆盖：
+默认 smoke 会构建并驱动 `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`，覆盖：
 
 - 自动签到
 - 自动羊了个羊

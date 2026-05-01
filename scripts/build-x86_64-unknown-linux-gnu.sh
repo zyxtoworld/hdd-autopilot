@@ -6,7 +6,7 @@ ARTIFACT_DIR="$ROOT/dist"
 TARGET="x86_64-unknown-linux-gnu"
 ZIG_TARGET="$TARGET.2.17"
 OUTPUT="$ROOT/target/$TARGET/release/hdd-autopilot"
-ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-linux-amd64"
+ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-x86_64-unknown-linux-gnu"
 STATUS_FILE="$ARTIFACT.status"
 CHECK_ONLY="${1:-}"
 ORCHESTRATED=0
@@ -15,7 +15,7 @@ if [ "$CHECK_ONLY" = "--orchestrated" ]; then
   CHECK_ONLY="${2:-}"
 fi
 
-host_is_linux_amd64() {
+host_is_linux_x86_64() {
   local os arch
   os="$(uname -s)"
   arch="$(uname -m)"
@@ -31,7 +31,7 @@ has_zig_toolchain() {
 }
 
 print_missing_env_message() {
-  echo "Linux amd64 packaging environment missing: install Rust cargo plus cargo-zigbuild and zig, or build on a Linux amd64 host with a C compiler." >&2
+  echo "Linux x86_64 packaging environment missing: install Rust cargo plus cargo-zigbuild and zig, or build on a Linux x86_64 host with a C compiler." >&2
 }
 
 pause_on_missing_env() {
@@ -45,7 +45,7 @@ pause_on_missing_env() {
 
 check_env() {
   if ! command -v cargo >/dev/null 2>&1; then
-    echo "Linux amd64 packaging environment missing: cargo is not in PATH." >&2
+    echo "Linux x86_64 packaging environment missing: cargo is not in PATH." >&2
     return 2
   fi
 
@@ -53,7 +53,7 @@ check_env() {
     return 0
   fi
 
-  if host_is_linux_amd64 && has_c_compiler; then
+  if host_is_linux_x86_64 && has_c_compiler; then
     return 0
   fi
 
@@ -75,7 +75,7 @@ if [ -z "$PAYLOAD_LINE" ]; then
   exit 1
 fi
 TMPDIR_VALUE="${TMPDIR:-/tmp}"
-TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-autopilot-linux-amd64.XXXXXX")
+TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-autopilot-x86_64-unknown-linux-gnu.XXXXXX")
 cleanup() {
   rm -f "$TMPFILE"
 }
@@ -108,19 +108,19 @@ if ! check_env; then
 fi
 mkdir -p "$ARTIFACT_DIR"
 
-echo "Building hdd-autopilot-linux-amd64..."
+echo "Building hdd-autopilot-x86_64-unknown-linux-gnu..."
 rustup target add "$TARGET" >/dev/null 2>&1 || true
 BUILD_LOG="$ARTIFACT.log"
 rm -f "$BUILD_LOG" "$STATUS_FILE"
 if has_zig_toolchain; then
   echo "Using cargo-zigbuild target $ZIG_TARGET for wider Linux compatibility." | tee "$BUILD_LOG"
   cargo zigbuild --release --package hdd-autopilot --target "$ZIG_TARGET" 2>&1 | tee -a "$BUILD_LOG"
-elif host_is_linux_amd64 && has_c_compiler; then
+elif host_is_linux_x86_64 && has_c_compiler; then
   echo "Using native Linux build; compatibility follows this host glibc version." | tee "$BUILD_LOG"
   cargo build --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee -a "$BUILD_LOG"
 fi
 if [ ! -f "$OUTPUT" ]; then
-  echo "Linux amd64 build failed: expected output not found at $OUTPUT." >&2
+  echo "Linux x86_64 build failed: expected output not found at $OUTPUT." >&2
   exit 1
 fi
 if grep -Eqi "native backend disabled" "$BUILD_LOG"; then

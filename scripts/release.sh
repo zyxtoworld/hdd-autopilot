@@ -4,211 +4,211 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 HOST_OS="$(uname -s)"
-WIN_STATUS="failed"
-WIN_REASON=""
-MAC_AMD64_STATUS="failed"
-MAC_AMD64_REASON=""
-MAC_ARM64_STATUS="failed"
-MAC_ARM64_REASON=""
-LINUX_AMD64_STATUS="failed"
-LINUX_AMD64_REASON=""
-LINUX_ARM64_STATUS="failed"
-LINUX_ARM64_REASON=""
+X86_64_PC_WINDOWS_MSVC_STATUS="failed"
+X86_64_PC_WINDOWS_MSVC_REASON=""
+X86_64_APPLE_DARWIN_STATUS="failed"
+X86_64_APPLE_DARWIN_REASON=""
+AARCH64_APPLE_DARWIN_STATUS="failed"
+AARCH64_APPLE_DARWIN_REASON=""
+X86_64_UNKNOWN_LINUX_GNU_STATUS="failed"
+X86_64_UNKNOWN_LINUX_GNU_REASON=""
+AARCH64_UNKNOWN_LINUX_GNU_STATUS="failed"
+AARCH64_UNKNOWN_LINUX_GNU_REASON=""
 
-run_windows() {
-  echo "Checking Windows x64 build environment..."
+run_x86_64_pc_windows_msvc() {
+  echo "Checking Windows x86_64 build environment..."
   case "$HOST_OS" in
     MINGW*|MSYS*|CYGWIN*)
       if ! command -v powershell.exe >/dev/null 2>&1; then
-        WIN_STATUS="failed"
-        WIN_REASON="(missing powershell.exe)"
-        echo "Windows x64 check failed, continuing with other platforms."
+        X86_64_PC_WINDOWS_MSVC_STATUS="failed"
+        X86_64_PC_WINDOWS_MSVC_REASON="(missing powershell.exe)"
+        echo "Windows x86_64 check failed, continuing with other platforms."
         echo
         return 0
       fi
       ;;
     *)
-      WIN_STATUS="failed"
-      WIN_REASON="(current host cannot call Windows batch build)"
-      echo "Windows x64 check failed, continuing with other platforms."
+      X86_64_PC_WINDOWS_MSVC_STATUS="failed"
+      X86_64_PC_WINDOWS_MSVC_REASON="(current host cannot call Windows batch build)"
+      echo "Windows x86_64 check failed, continuing with other platforms."
       echo
       return 0
       ;;
   esac
 
-  local script="$ROOT/scripts/build-win-x64.bat"
+  local script="$ROOT/scripts/build-x86_64-pc-windows-msvc.bat"
   local windows_script="$script"
   if command -v cygpath >/dev/null 2>&1; then
     windows_script="$(cygpath -w "$script")"
   fi
   if ! powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '$windows_script' --check; exit \$LASTEXITCODE"; then
-    WIN_STATUS="failed"
-    WIN_REASON="(missing build environment)"
-    echo "Windows x64 check failed, continuing with other platforms."
+    X86_64_PC_WINDOWS_MSVC_STATUS="failed"
+    X86_64_PC_WINDOWS_MSVC_REASON="(missing build environment)"
+    echo "Windows x86_64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "Building Windows x64..."
+  echo "Building Windows x86_64..."
   if ! powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '$windows_script' --orchestrated; exit \$LASTEXITCODE"; then
-    WIN_STATUS="failed"
-    WIN_REASON="(build failed)"
+    X86_64_PC_WINDOWS_MSVC_STATUS="failed"
+    X86_64_PC_WINDOWS_MSVC_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-autopilot-win-x64.status" ]; then
-      WIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-win-x64.status")"
+    if [ -f "$DIST/hdd-autopilot-x86_64-pc-windows-msvc.status" ]; then
+      X86_64_PC_WINDOWS_MSVC_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-x86_64-pc-windows-msvc.status")"
     else
-      WIN_STATUS="built"
+      X86_64_PC_WINDOWS_MSVC_STATUS="built"
     fi
-    if [ "$WIN_STATUS" = "built_degraded" ]; then
-      WIN_REASON="(native CUDA backend degraded)"
+    if [ "$X86_64_PC_WINDOWS_MSVC_STATUS" = "built_degraded" ]; then
+      X86_64_PC_WINDOWS_MSVC_REASON="(native CUDA backend degraded)"
     else
-      WIN_REASON="(complete)"
+      X86_64_PC_WINDOWS_MSVC_REASON="(complete)"
     fi
   fi
   echo
 }
 
-run_macos_amd64() {
-  echo "Checking macOS amd64 build environment..."
-  if ! bash "$ROOT/scripts/build-macos-amd64.sh" --orchestrated --check; then
-    MAC_AMD64_STATUS="failed"
-    MAC_AMD64_REASON="(missing build environment)"
-    echo "macOS amd64 check failed, continuing with other platforms."
+run_x86_64_apple_darwin() {
+  echo "Checking macOS x86_64 build environment..."
+  if ! bash "$ROOT/scripts/build-x86_64-apple-darwin.sh" --orchestrated --check; then
+    X86_64_APPLE_DARWIN_STATUS="failed"
+    X86_64_APPLE_DARWIN_REASON="(missing build environment)"
+    echo "macOS x86_64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "Building macOS amd64..."
-  if ! bash "$ROOT/scripts/build-macos-amd64.sh" --orchestrated; then
-    MAC_AMD64_STATUS="failed"
-    MAC_AMD64_REASON="(build failed)"
+  echo "Building macOS x86_64..."
+  if ! bash "$ROOT/scripts/build-x86_64-apple-darwin.sh" --orchestrated; then
+    X86_64_APPLE_DARWIN_STATUS="failed"
+    X86_64_APPLE_DARWIN_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-autopilot-macos-amd64.status" ]; then
-      MAC_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-macos-amd64.status")"
+    if [ -f "$DIST/hdd-autopilot-x86_64-apple-darwin.status" ]; then
+      X86_64_APPLE_DARWIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-x86_64-apple-darwin.status")"
     else
-      MAC_AMD64_STATUS="built"
+      X86_64_APPLE_DARWIN_STATUS="built"
     fi
-    if [ "$MAC_AMD64_STATUS" = "built_degraded" ]; then
-      MAC_AMD64_REASON="(OpenCL/Metal backend degraded)"
+    if [ "$X86_64_APPLE_DARWIN_STATUS" = "built_degraded" ]; then
+      X86_64_APPLE_DARWIN_REASON="(OpenCL/Metal backend degraded)"
     else
-      MAC_AMD64_REASON="(complete)"
+      X86_64_APPLE_DARWIN_REASON="(complete)"
     fi
   fi
   echo
 }
 
-run_macos_arm64() {
-  echo "Checking macOS arm64 build environment..."
-  if ! bash "$ROOT/scripts/build-macos-arm64.sh" --orchestrated --check; then
-    MAC_ARM64_STATUS="failed"
-    MAC_ARM64_REASON="(missing build environment)"
-    echo "macOS arm64 check failed, continuing with other platforms."
+run_aarch64_apple_darwin() {
+  echo "Checking macOS aarch64 build environment..."
+  if ! bash "$ROOT/scripts/build-aarch64-apple-darwin.sh" --orchestrated --check; then
+    AARCH64_APPLE_DARWIN_STATUS="failed"
+    AARCH64_APPLE_DARWIN_REASON="(missing build environment)"
+    echo "macOS aarch64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "Building macOS arm64..."
-  if ! bash "$ROOT/scripts/build-macos-arm64.sh" --orchestrated; then
-    MAC_ARM64_STATUS="failed"
-    MAC_ARM64_REASON="(build failed)"
+  echo "Building macOS aarch64..."
+  if ! bash "$ROOT/scripts/build-aarch64-apple-darwin.sh" --orchestrated; then
+    AARCH64_APPLE_DARWIN_STATUS="failed"
+    AARCH64_APPLE_DARWIN_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-autopilot-macos-arm64.status" ]; then
-      MAC_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-macos-arm64.status")"
+    if [ -f "$DIST/hdd-autopilot-aarch64-apple-darwin.status" ]; then
+      AARCH64_APPLE_DARWIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-aarch64-apple-darwin.status")"
     else
-      MAC_ARM64_STATUS="built"
+      AARCH64_APPLE_DARWIN_STATUS="built"
     fi
-    if [ "$MAC_ARM64_STATUS" = "built_degraded" ]; then
-      MAC_ARM64_REASON="(OpenCL/Metal backend degraded)"
+    if [ "$AARCH64_APPLE_DARWIN_STATUS" = "built_degraded" ]; then
+      AARCH64_APPLE_DARWIN_REASON="(OpenCL/Metal backend degraded)"
     else
-      MAC_ARM64_REASON="(complete)"
+      AARCH64_APPLE_DARWIN_REASON="(complete)"
     fi
   fi
   echo
 }
 
-run_linux_amd64() {
-  echo "Checking Linux amd64 build environment..."
-  if ! bash "$ROOT/scripts/build-linux-amd64.sh" --orchestrated --check; then
-    LINUX_AMD64_STATUS="failed"
-    LINUX_AMD64_REASON="(missing build environment)"
-    echo "Linux amd64 check failed, continuing with other platforms."
+run_x86_64_unknown_linux_gnu() {
+  echo "Checking Linux x86_64 build environment..."
+  if ! bash "$ROOT/scripts/build-x86_64-unknown-linux-gnu.sh" --orchestrated --check; then
+    X86_64_UNKNOWN_LINUX_GNU_STATUS="failed"
+    X86_64_UNKNOWN_LINUX_GNU_REASON="(missing build environment)"
+    echo "Linux x86_64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "Building Linux amd64..."
-  if ! bash "$ROOT/scripts/build-linux-amd64.sh" --orchestrated; then
-    LINUX_AMD64_STATUS="failed"
-    LINUX_AMD64_REASON="(build failed)"
+  echo "Building Linux x86_64..."
+  if ! bash "$ROOT/scripts/build-x86_64-unknown-linux-gnu.sh" --orchestrated; then
+    X86_64_UNKNOWN_LINUX_GNU_STATUS="failed"
+    X86_64_UNKNOWN_LINUX_GNU_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-autopilot-linux-amd64.status" ]; then
-      LINUX_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-linux-amd64.status")"
+    if [ -f "$DIST/hdd-autopilot-x86_64-unknown-linux-gnu.status" ]; then
+      X86_64_UNKNOWN_LINUX_GNU_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-x86_64-unknown-linux-gnu.status")"
     else
-      LINUX_AMD64_STATUS="built"
+      X86_64_UNKNOWN_LINUX_GNU_STATUS="built"
     fi
-    if [ "$LINUX_AMD64_STATUS" = "built_degraded" ]; then
-      LINUX_AMD64_REASON="(native backend degraded)"
+    if [ "$X86_64_UNKNOWN_LINUX_GNU_STATUS" = "built_degraded" ]; then
+      X86_64_UNKNOWN_LINUX_GNU_REASON="(native backend degraded)"
     else
-      LINUX_AMD64_REASON="(complete)"
+      X86_64_UNKNOWN_LINUX_GNU_REASON="(complete)"
     fi
   fi
   echo
 }
 
-run_linux_arm64() {
-  echo "Checking Linux arm64 build environment..."
-  if ! bash "$ROOT/scripts/build-linux-arm64.sh" --orchestrated --check; then
-    LINUX_ARM64_STATUS="failed"
-    LINUX_ARM64_REASON="(missing build environment)"
-    echo "Linux arm64 check failed, continuing with other platforms."
+run_aarch64_unknown_linux_gnu() {
+  echo "Checking Linux aarch64 build environment..."
+  if ! bash "$ROOT/scripts/build-aarch64-unknown-linux-gnu.sh" --orchestrated --check; then
+    AARCH64_UNKNOWN_LINUX_GNU_STATUS="failed"
+    AARCH64_UNKNOWN_LINUX_GNU_REASON="(missing build environment)"
+    echo "Linux aarch64 check failed, continuing with other platforms."
     echo
     return 0
   fi
 
   echo
-  echo "Building Linux arm64..."
-  if ! bash "$ROOT/scripts/build-linux-arm64.sh" --orchestrated; then
-    LINUX_ARM64_STATUS="failed"
-    LINUX_ARM64_REASON="(build failed)"
+  echo "Building Linux aarch64..."
+  if ! bash "$ROOT/scripts/build-aarch64-unknown-linux-gnu.sh" --orchestrated; then
+    AARCH64_UNKNOWN_LINUX_GNU_STATUS="failed"
+    AARCH64_UNKNOWN_LINUX_GNU_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-autopilot-linux-arm64.status" ]; then
-      LINUX_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-linux-arm64.status")"
+    if [ -f "$DIST/hdd-autopilot-aarch64-unknown-linux-gnu.status" ]; then
+      AARCH64_UNKNOWN_LINUX_GNU_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-aarch64-unknown-linux-gnu.status")"
     else
-      LINUX_ARM64_STATUS="built"
+      AARCH64_UNKNOWN_LINUX_GNU_STATUS="built"
     fi
-    if [ "$LINUX_ARM64_STATUS" = "built_degraded" ]; then
-      LINUX_ARM64_REASON="(native backend degraded)"
+    if [ "$AARCH64_UNKNOWN_LINUX_GNU_STATUS" = "built_degraded" ]; then
+      AARCH64_UNKNOWN_LINUX_GNU_REASON="(native backend degraded)"
     else
-      LINUX_ARM64_REASON="(complete)"
+      AARCH64_UNKNOWN_LINUX_GNU_REASON="(complete)"
     fi
   fi
   echo
 }
 
-run_windows
-run_macos_amd64
-run_macos_arm64
-run_linux_amd64
-run_linux_arm64
+run_x86_64_pc_windows_msvc
+run_x86_64_apple_darwin
+run_aarch64_apple_darwin
+run_x86_64_unknown_linux_gnu
+run_aarch64_unknown_linux_gnu
 
 echo
 echo "Release package summary:"
-echo "  Windows x64  : $WIN_STATUS $WIN_REASON"
-echo "  macOS amd64  : $MAC_AMD64_STATUS $MAC_AMD64_REASON"
-echo "  macOS arm64  : $MAC_ARM64_STATUS $MAC_ARM64_REASON"
-echo "  Linux amd64  : $LINUX_AMD64_STATUS $LINUX_AMD64_REASON"
-echo "  Linux arm64  : $LINUX_ARM64_STATUS $LINUX_ARM64_REASON"
+echo "  Windows x86_64  : $X86_64_PC_WINDOWS_MSVC_STATUS $X86_64_PC_WINDOWS_MSVC_REASON"
+echo "  macOS x86_64  : $X86_64_APPLE_DARWIN_STATUS $X86_64_APPLE_DARWIN_REASON"
+echo "  macOS aarch64  : $AARCH64_APPLE_DARWIN_STATUS $AARCH64_APPLE_DARWIN_REASON"
+echo "  Linux x86_64  : $X86_64_UNKNOWN_LINUX_GNU_STATUS $X86_64_UNKNOWN_LINUX_GNU_REASON"
+echo "  Linux aarch64  : $AARCH64_UNKNOWN_LINUX_GNU_STATUS $AARCH64_UNKNOWN_LINUX_GNU_REASON"
 echo
 
-if [ "$WIN_STATUS" = "failed" ] || [ "$MAC_AMD64_STATUS" = "failed" ] || [ "$MAC_ARM64_STATUS" = "failed" ] || [ "$LINUX_AMD64_STATUS" = "failed" ] || [ "$LINUX_ARM64_STATUS" = "failed" ]; then
+if [ "$X86_64_PC_WINDOWS_MSVC_STATUS" = "failed" ] || [ "$X86_64_APPLE_DARWIN_STATUS" = "failed" ] || [ "$AARCH64_APPLE_DARWIN_STATUS" = "failed" ] || [ "$X86_64_UNKNOWN_LINUX_GNU_STATUS" = "failed" ] || [ "$AARCH64_UNKNOWN_LINUX_GNU_STATUS" = "failed" ]; then
   exit 1
 fi
 
-if [ "$WIN_STATUS" = "built_degraded" ] || [ "$MAC_AMD64_STATUS" = "built_degraded" ] || [ "$MAC_ARM64_STATUS" = "built_degraded" ] || [ "$LINUX_AMD64_STATUS" = "built_degraded" ] || [ "$LINUX_ARM64_STATUS" = "built_degraded" ]; then
+if [ "$X86_64_PC_WINDOWS_MSVC_STATUS" = "built_degraded" ] || [ "$X86_64_APPLE_DARWIN_STATUS" = "built_degraded" ] || [ "$AARCH64_APPLE_DARWIN_STATUS" = "built_degraded" ] || [ "$X86_64_UNKNOWN_LINUX_GNU_STATUS" = "built_degraded" ] || [ "$AARCH64_UNKNOWN_LINUX_GNU_STATUS" = "built_degraded" ]; then
   echo "Release packaging completed with degraded package(s)."
 else
   echo "Release packaging completed."
