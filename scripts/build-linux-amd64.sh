@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT_DIR="$ROOT/dist"
 TARGET="x86_64-unknown-linux-gnu"
 ZIG_TARGET="$TARGET.2.17"
-OUTPUT="$ROOT/target/$TARGET/release/hdd"
+OUTPUT="$ROOT/target/$TARGET/release/hdd-autopilot"
 ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-linux-amd64"
 STATUS_FILE="$ARTIFACT.status"
 CHECK_ONLY="${1:-}"
@@ -69,7 +69,7 @@ write_wrapper() {
 #!/bin/sh
 set -eu
 SELF="$0"
-PAYLOAD_LINE=$(awk '/^__HDD_PAYLOAD_BELOW__$/ { print NR + 1; exit }' "$SELF")
+PAYLOAD_LINE=$(awk '/^__HDD_AUTOPILOT_PAYLOAD_BELOW__$/ { print NR + 1; exit }' "$SELF")
 if [ -z "$PAYLOAD_LINE" ]; then
   echo "Package is corrupted: missing payload marker." >&2
   exit 1
@@ -86,7 +86,7 @@ chmod +x "$TMPFILE"
 "$TMPFILE" "$@"
 STATUS=$?
 exit "$STATUS"
-__HDD_PAYLOAD_BELOW__
+__HDD_AUTOPILOT_PAYLOAD_BELOW__
 EOF
 )
   printf '%s\n' "$payload_line" > "$artifact"
@@ -114,10 +114,10 @@ BUILD_LOG="$ARTIFACT.log"
 rm -f "$BUILD_LOG" "$STATUS_FILE"
 if has_zig_toolchain; then
   echo "Using cargo-zigbuild target $ZIG_TARGET for wider Linux compatibility." | tee "$BUILD_LOG"
-  cargo zigbuild --release --package hdd --target "$ZIG_TARGET" 2>&1 | tee -a "$BUILD_LOG"
+  cargo zigbuild --release --package hdd-autopilot --target "$ZIG_TARGET" 2>&1 | tee -a "$BUILD_LOG"
 elif host_is_linux_amd64 && has_c_compiler; then
   echo "Using native Linux build; compatibility follows this host glibc version." | tee "$BUILD_LOG"
-  cargo build --release --package hdd --target "$TARGET" 2>&1 | tee -a "$BUILD_LOG"
+  cargo build --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee -a "$BUILD_LOG"
 fi
 if [ ! -f "$OUTPUT" ]; then
   echo "Linux amd64 build failed: expected output not found at $OUTPUT." >&2

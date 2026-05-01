@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT_DIR="$ROOT/dist"
 TARGET="aarch64-apple-darwin"
-OUTPUT="$ROOT/target/$TARGET/release/hdd"
+OUTPUT="$ROOT/target/$TARGET/release/hdd-autopilot"
 ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-macos-arm64"
 STATUS_FILE="$ARTIFACT.status"
 CHECK_ONLY="${1:-}"
@@ -89,7 +89,7 @@ write_wrapper() {
 #!/bin/sh
 set -eu
 SELF="$0"
-PAYLOAD_LINE=$(awk '/^__HDD_PAYLOAD_BELOW__$/ { print NR + 1; exit }' "$SELF")
+PAYLOAD_LINE=$(awk '/^__HDD_AUTOPILOT_PAYLOAD_BELOW__$/ { print NR + 1; exit }' "$SELF")
 if [ -z "$PAYLOAD_LINE" ]; then
   echo "包装损坏：缺少 payload 标记。" >&2
   exit 1
@@ -106,7 +106,7 @@ chmod +x "$TMPFILE"
 "$TMPFILE" "$@"
 STATUS=$?
 exit "$STATUS"
-__HDD_PAYLOAD_BELOW__
+__HDD_AUTOPILOT_PAYLOAD_BELOW__
 EOF
 )
   printf '%s\n' "$payload_line" > "$artifact"
@@ -134,12 +134,12 @@ BUILD_LOG="$ARTIFACT.log"
 rm -f "$BUILD_LOG" "$STATUS_FILE"
 if has_zig_toolchain; then
   if SDK_PATH="$(resolve_apple_sdk 2>/dev/null)"; then
-    SDKROOT="$SDK_PATH" cargo zigbuild --release --package hdd --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
+    SDKROOT="$SDK_PATH" cargo zigbuild --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
   else
-    cargo zigbuild --release --package hdd --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
+    cargo zigbuild --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
   fi
 else
-  cargo build --release --package hdd --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
+  cargo build --release --package hdd-autopilot --target "$TARGET" 2>&1 | tee "$BUILD_LOG"
 fi
 if [ ! -f "$OUTPUT" ]; then
   echo "macOS arm64 构建失败：当前环境缺少可用的 Apple 目标工具链；至少需要可用的 zig+Apple SDK，或可工作的 $TARGET C/Framework 交叉编译环境。" >&2

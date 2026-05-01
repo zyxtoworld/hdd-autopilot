@@ -11,7 +11,7 @@ use url as _;
 
 use std::time::Instant;
 
-use hdd::solver::puzzle_2048::{
+use hdd_autopilot::solver::puzzle_2048::{
     DEFAULT_DIRECTIONS, apply_move, choose_next_move, choose_next_move_fast, legal_moves,
 };
 

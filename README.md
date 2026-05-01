@@ -1,6 +1,6 @@
 # hdd-autopilot
 
-面向号多多AI公益站的多账号自动化运行器。项目内部 Rust 根包仍叫 `hdd`，负责 CLI 菜单、账号缓存、批量玩法、运行时路径和终端日志视图；`crates/mining` 负责挖矿控制面、CPU/GPU 后端调优、奖励码提交和结果保存；CUDA / OpenCL / Metal 原生计算核心位于 `native/`，并通过对应 `*-sys` crate 接入 Rust。
+面向号多多AI公益站的多账号自动化运行器。Rust 根包和发布产物统一使用 `hdd-autopilot`，源码中 crate 导入名为 `hdd_autopilot`；根包负责 CLI 菜单、账号缓存、批量玩法、运行时路径和终端日志视图；`crates/mining` 负责挖矿控制面、CPU/GPU 后端调优、奖励码提交和结果保存；CUDA / OpenCL / Metal 原生计算核心位于 `native/`，并通过对应 `*-sys` crate 接入 Rust。
 
 ## 项目规范
 
@@ -18,7 +18,7 @@
 源码运行：
 
 ```bash
-cargo run --release --bin hdd
+cargo run --release --bin hdd-autopilot
 ```
 
 打包后运行 `dist/` 下对应平台的产物：
@@ -256,7 +256,7 @@ macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-linu
 - 用户停在历史位置时不会被新日志强制拉回底部；按 `End` 回到底部后继续跟随最新日志。
 - 运行中按 `ESC` 请求停止后台任务；任务结束后按 `ESC` 返回上一级菜单。
 
-非交互模式下任务同步执行并输出到 stdout。设置 `HDD_SMOKE_AUTO_RETURN=1` 时，完成后会自动返回，供 smoke 脚本使用。
+非交互模式下任务同步执行并输出到 stdout。设置 `HDD_AUTOPILOT_SMOKE_AUTO_RETURN=1` 时，完成后会自动返回，供 smoke 脚本使用。
 
 ## 目录结构
 
@@ -622,7 +622,7 @@ powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false -SkipMemory:$false -SkipPuzzle15:$false -SkipSudoku:$false
 ```
 
-smoke 会设置 `HDD_SMOKE_AUTO_RETURN=1`，并检查：
+smoke 会设置 `HDD_AUTOPILOT_SMOKE_AUTO_RETURN=1`，并检查：
 
 - 完成提示出现。
 - `ESC` 返回上一级菜单可用。

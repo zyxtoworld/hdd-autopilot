@@ -36,11 +36,11 @@ pushd "%ROOT%"
 if errorlevel 1 exit /b 1
 
 echo 正在构建 hdd-autopilot-win-x64.exe...
-cargo build --release --package hdd > "%BUILD_LOG%" 2>&1
+cargo build --release --package hdd-autopilot > "%BUILD_LOG%" 2>&1
 set "BUILD_EXIT=%ERRORLEVEL%"
 type "%BUILD_LOG%"
 if not "%BUILD_EXIT%"=="0" exit /b %BUILD_EXIT%
-copy /Y ".\target\release\hdd.exe" "%DIST%\hdd-autopilot-win-x64.exe" >nul
+copy /Y ".\target\release\hdd-autopilot.exe" "%DIST%\hdd-autopilot-win-x64.exe" >nul
 if errorlevel 1 goto :fail
 findstr /I /C:"native backend disabled" "%BUILD_LOG%" >nul
 if errorlevel 1 (

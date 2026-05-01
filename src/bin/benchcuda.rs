@@ -1,6 +1,6 @@
 use chrono as _;
 use crossterm as _;
-use hdd as _;
+use hdd_autopilot as _;
 use mining::benchmark_best_gpu_runtime;
 use rand as _;
 use reqwest as _;

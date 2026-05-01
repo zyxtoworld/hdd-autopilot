@@ -245,7 +245,7 @@ pub fn wait_for_escape() -> io::Result<()> {
 pub fn wait_for_batch_return(message: &str) -> io::Result<()> {
     let interactive = supports_interactive_terminal();
     show_footer_prompt(&format_batch_return_message(message, interactive));
-    if std::env::var("HDD_SMOKE_AUTO_RETURN").is_ok() {
+    if std::env::var("HDD_AUTOPILOT_SMOKE_AUTO_RETURN").is_ok() {
         println!("已返回上一级菜单。");
         let _ = io::stdout().flush();
         hide_pinned_prompt();
@@ -396,7 +396,7 @@ where
             drop(screen.take());
             return Ok(None);
         }
-        if std::env::var("HDD_SMOKE_AUTO_RETURN").is_ok()
+        if std::env::var("HDD_AUTOPILOT_SMOKE_AUTO_RETURN").is_ok()
             && let Some(result) = outcome.take()
         {
             drop(screen.take());

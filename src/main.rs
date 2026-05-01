@@ -10,9 +10,9 @@ use tempfile as _;
 use unicode_width as _;
 use url as _;
 
-use hdd::cli;
-use hdd::runtime;
-use hdd::ui;
+use hdd_autopilot::cli;
+use hdd_autopilot::runtime;
+use hdd_autopilot::ui;
 
 fn main() {
     runtime::migrate_legacy_data_file("auth.json");

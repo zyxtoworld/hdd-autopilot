@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn uses_runtime_parent_as_root() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let runtime = root.join(RUNTIME_DIR_NAME);
         fs::create_dir_all(&runtime).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn uses_dist_parent_as_root() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let dist = root.join(DIST_DIR_NAME);
         fs::create_dir_all(&dist).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn uses_legacy_artifacts_parent_as_root() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let artifacts = root.join(LEGACY_ARTIFACT_DIR_NAME);
         fs::create_dir_all(&artifacts).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn data_files_default_under_var_data() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         fs::create_dir_all(root.join(DIST_DIR_NAME)).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
 
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn log_files_default_under_var_log() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let src_dir = root.join("src");
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
@@ -307,7 +307,7 @@ mod tests {
     fn packaged_file_prefers_executable_directory() {
         let got = resolve_packaged_file_path_with_sources(
             "mining-cuda-win-x64.exe",
-            Some(PathBuf::from("workspace/hdd")),
+            Some(PathBuf::from("workspace/hdd-autopilot")),
             Some(PathBuf::from("portable/hdd-autopilot-win-x64.exe")),
         );
         assert_eq!(got, PathBuf::from("portable/mining-cuda-win-x64.exe"));
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn packaged_file_falls_back_to_workspace_dist() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let target_release = root.join("target").join("release");
         fs::create_dir_all(root.join(DIST_DIR_NAME)).unwrap();
         fs::create_dir_all(&target_release).unwrap();
@@ -339,7 +339,7 @@ mod tests {
         let got = resolve_packaged_file_path_with_sources(
             "mining-cuda-win-x64.exe",
             Some(root.clone()),
-            Some(target_release.join("hdd.exe")),
+            Some(target_release.join("hdd-autopilot.exe")),
         );
         assert_eq!(
             got,
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn packaged_file_still_falls_back_to_workspace_legacy_artifacts() {
         let temp = tempdir().unwrap();
-        let root = temp.path().join("workspace").join("hdd");
+        let root = temp.path().join("workspace").join("hdd-autopilot");
         let target_release = root.join("target").join("release");
         let legacy_artifacts = root.join(LEGACY_ARTIFACT_DIR_NAME);
         fs::create_dir_all(&legacy_artifacts).unwrap();
@@ -365,7 +365,7 @@ mod tests {
         let got = resolve_packaged_file_path_with_sources(
             "mining-cuda-win-x64.exe",
             Some(root.clone()),
-            Some(target_release.join("hdd.exe")),
+            Some(target_release.join("hdd-autopilot.exe")),
         );
         assert_eq!(
             got,

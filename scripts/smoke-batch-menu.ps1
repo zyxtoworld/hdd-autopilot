@@ -96,7 +96,7 @@ function Invoke-HeadlessFlow {
 
     Push-Location $root
     try {
-        & cmd.exe /d /c "chcp 65001>nul && set HDD_SMOKE_AUTO_RETURN=1 && dist\hdd-autopilot-win-x64.exe < `"$inputFile`" > `"$sessionLog`" 2>&1"
+        & cmd.exe /d /c "chcp 65001>nul && set HDD_AUTOPILOT_SMOKE_AUTO_RETURN=1 && dist\hdd-autopilot-win-x64.exe < `"$inputFile`" > `"$sessionLog`" 2>&1"
         if ($LASTEXITCODE -ne 0) {
             throw "$Name flow exited with code $LASTEXITCODE"
         }
