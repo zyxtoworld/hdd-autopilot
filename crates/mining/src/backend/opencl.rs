@@ -210,30 +210,32 @@ impl OpenclBackend {
     }
 
     pub fn descriptor_for_device(&self, device: &OpenclDeviceInfo) -> BackendDescriptor {
+        let name = opencl_device_display_name(device);
         BackendDescriptor {
             kind: BackendKind::Opencl,
-            name: device.name.clone(),
+            name,
             device_id: device.device_id.clone(),
             device_index: Some(device.device_index),
         }
     }
 
     pub fn list_devices(&self) -> Result<Vec<BackendDescriptor>, MiningError> {
-        if std::env::consts::OS != "macos" {
+        if !opencl_platform_supported() {
             return Ok(Vec::new());
         }
         let devices = opencl_sys::list_devices().map_err(MiningError::Message)?;
         Ok(devices
             .iter()
+            .filter(|device| device.is_gpu_like())
             .map(|device| self.descriptor_for_device(device))
             .collect())
     }
 
     pub fn detect_availability(&self) -> GPUAvailability {
-        if std::env::consts::OS != "macos" {
+        if !opencl_platform_supported() {
             return GPUAvailability {
                 available: false,
-                reason: "当前环境不是 macOS，无法使用 OpenCL 后端。".to_string(),
+                reason: "current platform does not support the OpenCL backend".to_string(),
             };
         }
         match opencl_sys::is_available() {
@@ -243,7 +245,7 @@ impl OpenclBackend {
             },
             Ok(false) => GPUAvailability {
                 available: false,
-                reason: "当前没有检测到可用的 OpenCL 设备。".to_string(),
+                reason: "当前没有检测到可用的 OpenCL GPU 设备。".to_string(),
             },
             Err(error) => GPUAvailability {
                 available: false,
@@ -351,7 +353,7 @@ impl OpenclBackend {
             precompute_refs,
             duration,
         } = config;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = (
                 device_index,
@@ -366,7 +368,7 @@ impl OpenclBackend {
                 "当前平台未启用 OpenCL 后端。".to_string(),
             ))
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let config = OpenclSolverConfig {
                 batch_size: batch_size.max(1),
@@ -445,4 +447,23 @@ impl OpenclBackend {
             cancel: Arc::clone(cancel),
         })
     }
+}
+
+fn opencl_platform_supported() -> bool {
+    matches!(std::env::consts::OS, "macos" | "linux")
+}
+
+fn opencl_device_display_name(device: &OpenclDeviceInfo) -> String {
+    let mut name = device.name.trim().to_string();
+    if name.is_empty() {
+        name = "OpenCL device".to_string();
+    }
+    name.push_str(" [");
+    name.push_str(device.device_type_label());
+    name.push(']');
+    if !device.platform.trim().is_empty() {
+        name.push_str(" @ ");
+        name.push_str(device.platform.trim());
+    }
+    name
 }

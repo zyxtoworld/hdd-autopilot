@@ -279,7 +279,10 @@ mod tests {
         let got = resolve_data_file_path_with_sources(
             "auth.json",
             Some(temp.path().join("outside")),
-            Some(root.join(DIST_DIR_NAME).join("hdd-autopilot-x86_64-pc-windows-msvc.exe")),
+            Some(
+                root.join(DIST_DIR_NAME)
+                    .join("hdd-autopilot-x86_64-pc-windows-msvc.exe"),
+            ),
         );
         assert_eq!(got, root.join("var").join("data").join("auth.json"));
     }
@@ -308,7 +311,9 @@ mod tests {
         let got = resolve_packaged_file_path_with_sources(
             "mining-cuda-win-x64.exe",
             Some(PathBuf::from("workspace/hdd-autopilot")),
-            Some(PathBuf::from("portable/hdd-autopilot-x86_64-pc-windows-msvc.exe")),
+            Some(PathBuf::from(
+                "portable/hdd-autopilot-x86_64-pc-windows-msvc.exe",
+            )),
         );
         assert_eq!(got, PathBuf::from("portable/mining-cuda-win-x64.exe"));
     }

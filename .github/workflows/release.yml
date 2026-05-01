@@ -12,13 +12,24 @@ permissions:
 jobs:
   build-x86_64-pc-windows-msvc:
     name: Windows x86_64
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: "12.5.0"
       - name: Build package
         shell: cmd
         run: scripts\build-x86_64-pc-windows-msvc.bat
+      - name: Require full package
+        shell: pwsh
+        run: |
+          $status = (Get-Content dist/hdd-autopilot-x86_64-pc-windows-msvc.status -Raw).Trim()
+          if ($status -ne "built") {
+            throw "Expected built status, got '$status'. Degraded release packages are not allowed."
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: hdd-autopilot-x86_64-pc-windows-msvc
@@ -36,6 +47,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build package
         run: bash scripts/build-x86_64-apple-darwin.sh
+      - name: Require full package
+        run: |
+          status="$(tr -d '\r\n' < dist/hdd-autopilot-x86_64-apple-darwin.status)"
+          if [ "$status" != "built" ]; then
+            echo "::error::Expected built status, got '$status'. Degraded release packages are not allowed."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: hdd-autopilot-x86_64-apple-darwin
@@ -53,6 +71,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build package
         run: bash scripts/build-aarch64-apple-darwin.sh
+      - name: Require full package
+        run: |
+          status="$(tr -d '\r\n' < dist/hdd-autopilot-aarch64-apple-darwin.status)"
+          if [ "$status" != "built" ]; then
+            echo "::error::Expected built status, got '$status'. Degraded release packages are not allowed."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: hdd-autopilot-aarch64-apple-darwin
@@ -64,15 +89,21 @@ jobs:
 
   build-x86_64-unknown-linux-gnu:
     name: Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mlugg/setup-zig@v2
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked
+      - name: Install OpenCL build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev opencl-headers
       - name: Build package
         run: bash scripts/build-x86_64-unknown-linux-gnu.sh
+      - name: Require full package
+        run: |
+          status="$(tr -d '\r\n' < dist/hdd-autopilot-x86_64-unknown-linux-gnu.status)"
+          if [ "$status" != "built" ]; then
+            echo "::error::Expected built status, got '$status'. Degraded release packages are not allowed."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: hdd-autopilot-x86_64-unknown-linux-gnu
@@ -84,15 +115,21 @@ jobs:
 
   build-aarch64-unknown-linux-gnu:
     name: Linux aarch64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mlugg/setup-zig@v2
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked
+      - name: Install OpenCL build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev opencl-headers
       - name: Build package
         run: bash scripts/build-aarch64-unknown-linux-gnu.sh
+      - name: Require full package
+        run: |
+          status="$(tr -d '\r\n' < dist/hdd-autopilot-aarch64-unknown-linux-gnu.status)"
+          if [ "$status" != "built" ]; then
+            echo "::error::Expected built status, got '$status'. Degraded release packages are not allowed."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: hdd-autopilot-aarch64-unknown-linux-gnu

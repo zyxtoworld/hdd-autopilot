@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,35 @@ void set_last_error(const std::exception& error) {
 
 void clear_last_error() {
     g_last_error.clear();
+}
+
+template <std::size_t N>
+void copy_cstr(char (&target)[N], const std::string& value) {
+    std::fill(std::begin(target), std::end(target), '\0');
+    std::strncpy(target, value.c_str(), N - 1);
+}
+
+bool is_supported_compute_device(const argon2::opencl::Device& device) {
+    try {
+        const auto& cl_device = device.getCLDevice();
+        const auto device_type = cl_device.getInfo<CL_DEVICE_TYPE>();
+        const auto is_gpu_like = (device_type & CL_DEVICE_TYPE_GPU) != 0
+            || (device_type & CL_DEVICE_TYPE_ACCELERATOR) != 0;
+        return is_gpu_like
+            && cl_device.getInfo<CL_DEVICE_AVAILABLE>()
+            && cl_device.getInfo<CL_DEVICE_COMPILER_AVAILABLE>();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+std::size_t first_supported_device_index(const std::vector<argon2::opencl::Device>& devices) {
+    for (std::size_t index = 0; index < devices.size(); ++index) {
+        if (is_supported_compute_device(devices[index])) {
+            return index;
+        }
+    }
+    throw std::runtime_error("no supported OpenCL GPU devices found");
 }
 
 app::Job benchmark_job() {
@@ -81,14 +111,21 @@ void fill_device_info(std::size_t device_index, mining_opencl_device_info* resul
     }
 
     const auto& device = devices[device_index];
+    const auto& cl_device = device.getCLDevice();
+    const auto device_type = cl_device.getInfo<CL_DEVICE_TYPE>();
+    const auto vendor = cl_device.getInfo<CL_DEVICE_VENDOR>();
+    const cl::Platform platform(cl_device.getInfo<CL_DEVICE_PLATFORM>());
+    const auto platform_name = platform.getInfo<CL_PLATFORM_NAME>();
+
     result->device_index = device_index;
-    std::fill(std::begin(result->device_id), std::end(result->device_id), '\0');
-    std::fill(std::begin(result->name), std::end(result->name), '\0');
+    result->device_type = static_cast<std::uint64_t>(device_type);
 
     const auto device_id = std::string("opencl:") + std::to_string(device_index);
     const auto name = device.getName();
-    std::strncpy(result->device_id, device_id.c_str(), sizeof(result->device_id) - 1);
-    std::strncpy(result->name, name.c_str(), sizeof(result->name) - 1);
+    copy_cstr(result->device_id, device_id);
+    copy_cstr(result->name, name);
+    copy_cstr(result->vendor, vendor);
+    copy_cstr(result->platform, platform_name);
 }
 } // namespace
 
@@ -113,7 +150,8 @@ bool mining_opencl_is_available() {
     try {
         clear_last_error();
         argon2::opencl::GlobalContext global;
-        return !global.getAllDevices().empty();
+        const auto& devices = global.getAllDevices();
+        return std::any_of(devices.begin(), devices.end(), is_supported_compute_device);
     } catch (const std::exception& error) {
         set_last_error(error);
         return false;
@@ -123,7 +161,8 @@ bool mining_opencl_is_available() {
 bool mining_opencl_validate() {
     try {
         clear_last_error();
-        app::Solver solver(0);
+        argon2::opencl::GlobalContext global;
+        app::Solver solver(first_supported_device_index(global.getAllDevices()));
         solver.validate_against_reference(benchmark_job(), 1);
         return true;
     } catch (const std::exception& error) {

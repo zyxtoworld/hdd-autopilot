@@ -1,12 +1,18 @@
 #![allow(non_camel_case_types)]
 #![cfg_attr(
-    not(all(target_os = "macos", mining_opencl_native_enabled)),
+    not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )),
     allow(dead_code)
 )]
 
 use std::time::Duration;
 
-#[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    mining_opencl_native_enabled
+))]
 use std::ffi::CStr;
 
 #[repr(C)]
@@ -49,8 +55,11 @@ pub struct mining_opencl_mine_result {
 #[repr(C)]
 pub struct mining_opencl_device_info {
     pub device_index: usize,
+    pub device_type: u64,
     pub device_id: [u8; 32],
     pub name: [u8; 128],
+    pub vendor: [u8; 128],
+    pub platform: [u8; 128],
 }
 
 #[repr(C)]
@@ -78,8 +87,30 @@ pub struct OpenclJob<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenclDeviceInfo {
     pub device_index: usize,
+    pub device_type: u64,
     pub device_id: String,
     pub name: String,
+    pub vendor: String,
+    pub platform: String,
+}
+
+const OPENCL_DEVICE_TYPE_GPU: u64 = 1 << 2;
+const OPENCL_DEVICE_TYPE_ACCELERATOR: u64 = 1 << 3;
+
+impl OpenclDeviceInfo {
+    pub fn is_gpu_like(&self) -> bool {
+        self.device_type & (OPENCL_DEVICE_TYPE_GPU | OPENCL_DEVICE_TYPE_ACCELERATOR) != 0
+    }
+
+    pub fn device_type_label(&self) -> &'static str {
+        if self.device_type & OPENCL_DEVICE_TYPE_GPU != 0 {
+            "GPU"
+        } else if self.device_type & OPENCL_DEVICE_TYPE_ACCELERATOR != 0 {
+            "Accelerator"
+        } else {
+            "OpenCL"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -141,15 +172,21 @@ unsafe extern "C" {
 }
 
 pub fn is_available() -> Result<bool, String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Ok(false)
     }
-    #[cfg(all(target_os = "macos", not(mining_opencl_native_enabled)))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        not(mining_opencl_native_enabled)
+    ))]
     {
         Err("当前构建未启用 OpenCL 原生后端。".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         if mining_opencl_is_available() {
             Ok(true)
@@ -165,11 +202,17 @@ pub fn is_available() -> Result<bool, String> {
 }
 
 pub fn validate() -> Result<(), String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         Err("当前平台未启用 OpenCL 后端".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         if mining_opencl_validate() {
             Ok(())
@@ -180,27 +223,39 @@ pub fn validate() -> Result<(), String> {
 }
 
 pub fn list_devices() -> Result<Vec<OpenclDeviceInfo>, String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         Ok(Vec::new())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         let count = mining_opencl_device_count();
         let mut devices = Vec::with_capacity(count);
         for device_index in 0..count {
             let mut raw = mining_opencl_device_info {
                 device_index,
+                device_type: 0,
                 device_id: [0; 32],
                 name: [0; 128],
+                vendor: [0; 128],
+                platform: [0; 128],
             };
             if !mining_opencl_get_device_info(device_index, &mut raw) {
-                return Err(last_error_message());
+                continue;
             }
             devices.push(OpenclDeviceInfo {
                 device_index: raw.device_index,
+                device_type: raw.device_type,
                 device_id: decode_c_string(&raw.device_id),
                 name: decode_c_string(&raw.name),
+                vendor: decode_c_string(&raw.vendor),
+                platform: decode_c_string(&raw.platform),
             });
         }
         Ok(devices)
@@ -211,12 +266,18 @@ pub fn default_solver_config(
     device_index: usize,
     job: &OpenclJob<'_>,
 ) -> Result<OpenclSolverConfig, String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         let _ = (device_index, job);
         Err("当前平台未启用 OpenCL 后端".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         let raw_job = mining_opencl_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -245,12 +306,18 @@ pub fn default_solver_config(
 }
 
 pub fn find_best_benchmark_config(device_index: usize) -> Result<OpenclBenchmarkResult, String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         let _ = device_index;
         Err("当前平台未启用 OpenCL 后端".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         let mut raw = mining_opencl_benchmark_result {
             batch_size: 0,
@@ -282,12 +349,18 @@ pub fn mine_batch(
     config: OpenclSolverConfig,
     start_nonce: u64,
 ) -> Result<OpenclMineResult, String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         let _ = (device_index, job, config, start_nonce);
         Err("当前平台未启用 OpenCL 后端".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         let raw_job = mining_opencl_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -340,12 +413,18 @@ pub fn create_session(
     config: OpenclSolverConfig,
     start_nonce: u64,
 ) -> Result<OpenclMiningSession, String> {
-    #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+    #[cfg(not(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    )))]
     {
         let _ = (device_index, job, config, start_nonce);
         Err("当前平台未启用 OpenCL 后端".to_string())
     }
-    #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+    #[cfg(all(
+        any(target_os = "macos", target_os = "linux"),
+        mining_opencl_native_enabled
+    ))]
     unsafe {
         let raw_job = mining_opencl_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -373,11 +452,17 @@ pub fn create_session(
 
 impl OpenclMiningSession {
     pub fn mine_next_batch(&mut self) -> Result<OpenclMineResult, String> {
-        #[cfg(not(all(target_os = "macos", mining_opencl_native_enabled)))]
+        #[cfg(not(all(
+            any(target_os = "macos", target_os = "linux"),
+            mining_opencl_native_enabled
+        )))]
         {
             Err("当前平台未启用 OpenCL 后端".to_string())
         }
-        #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+        #[cfg(all(
+            any(target_os = "macos", target_os = "linux"),
+            mining_opencl_native_enabled
+        ))]
         unsafe {
             let mut raw_result = mining_opencl_mine_result {
                 found: false,
@@ -407,7 +492,10 @@ impl OpenclMiningSession {
 
 impl Drop for OpenclMiningSession {
     fn drop(&mut self) {
-        #[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+        #[cfg(all(
+            any(target_os = "macos", target_os = "linux"),
+            mining_opencl_native_enabled
+        ))]
         unsafe {
             if !self.raw.is_null() {
                 mining_opencl_session_destroy(self.raw);
@@ -417,7 +505,10 @@ impl Drop for OpenclMiningSession {
     }
 }
 
-#[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    mining_opencl_native_enabled
+))]
 fn decode_c_string(bytes: &[u8]) -> String {
     let len = bytes
         .iter()
@@ -426,7 +517,10 @@ fn decode_c_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..len]).trim().to_string()
 }
 
-#[cfg(all(target_os = "macos", mining_opencl_native_enabled))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    mining_opencl_native_enabled
+))]
 unsafe fn last_error_message() -> String {
     let ptr = unsafe { mining_opencl_last_error_message() };
     if ptr.is_null() {

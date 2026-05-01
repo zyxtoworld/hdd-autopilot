@@ -46,8 +46,11 @@ struct mining_opencl_mine_result {
 
 struct mining_opencl_device_info {
     std::size_t device_index;
+    std::uint64_t device_type;
     char device_id[32];
     char name[128];
+    char vendor[128];
+    char platform[128];
 };
 
 MINING_OPENCL_EXPORT bool mining_opencl_is_available();
