@@ -1,6 +1,6 @@
-# hdd
+# hdd-autopilot
 
-`hdd` 是号多多脚本整合工具的 Rust workspace。根包 `hdd` 负责 CLI 菜单、账号缓存、批量玩法、运行时路径和终端日志视图；`crates/mining` 负责挖矿控制面、CPU/GPU 后端调优、奖励码提交和结果保存；CUDA / OpenCL / Metal 原生计算核心位于 `native/`，并通过对应 `*-sys` crate 接入 Rust。
+面向号多多AI公益站的多账号自动化运行器。项目内部 Rust 根包仍叫 `hdd`，负责 CLI 菜单、账号缓存、批量玩法、运行时路径和终端日志视图；`crates/mining` 负责挖矿控制面、CPU/GPU 后端调优、奖励码提交和结果保存；CUDA / OpenCL / Metal 原生计算核心位于 `native/`，并通过对应 `*-sys` crate 接入 Rust。
 
 ## 项目规范
 
@@ -23,10 +23,13 @@ cargo run --release --bin hdd
 
 打包后运行 `dist/` 下对应平台的产物：
 
-- `dist/hdd-win-x64.exe`
-- `dist/hdd-macos-amd64`
-- `dist/hdd-macos-arm64`
-- `dist/hdd-linux-amd64`
+- `dist/hdd-autopilot-win-x64.exe`
+- `dist/hdd-autopilot-macos-amd64`
+- `dist/hdd-autopilot-macos-arm64`
+- `dist/hdd-autopilot-linux-amd64`
+- `dist/hdd-autopilot-linux-arm64`
+
+macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-linux-amd64` 这类命令运行；如果需要 `./dist/hdd-autopilot-linux-amd64` 直接执行，先 `chmod +x`。Linux 包优先按 glibc 2.17 目标构建，可覆盖大多数仍在维护的 glibc 发行版；非 glibc 系统如 Alpine/musl 不在这个包的兼容范围内。
 
 程序启动时会准备 `var/` 运行时目录，并尝试迁移旧版根目录数据文件。
 
@@ -258,7 +261,7 @@ cargo run --release --bin hdd
 ## 目录结构
 
 ```text
-hdd/
+hdd-autopilot/
 ├─ src/
 │  ├─ main.rs                  # 主程序入口：迁移旧数据、准备控制台、进入 CLI
 │  ├─ lib.rs                   # 根库模块声明
@@ -424,25 +427,28 @@ hdd/
 清理约定：
 
 - `target/`、`.claude/`、`native/*/build/`、`var/log/` 都是本地临时或运行日志，可按需删除。
-- `dist/*.log` 和 `dist/*.status` 是打包过程状态文件，可删除；`dist/hdd-*` 是正式包。
+- `dist/*.log` 和 `dist/*.status` 是打包过程状态文件，可删除；`dist/hdd-autopilot-*` 是正式包。
 - `var/data/auth.json` 保存账号登录状态，清理项目时不要误删。
 
 ## 打包产物布局
 
 打包产物和构建状态平铺在 `dist/` 根目录：
 
-- `dist/hdd-win-x64.exe`
-- `dist/hdd-win-x64.build.log`
-- `dist/hdd-win-x64.status`
-- `dist/hdd-macos-amd64`
-- `dist/hdd-macos-amd64.log`
-- `dist/hdd-macos-amd64.status`
-- `dist/hdd-macos-arm64`
-- `dist/hdd-macos-arm64.log`
-- `dist/hdd-macos-arm64.status`
-- `dist/hdd-linux-amd64`
-- `dist/hdd-linux-amd64.log`
-- `dist/hdd-linux-amd64.status`
+- `dist/hdd-autopilot-win-x64.exe`
+- `dist/hdd-autopilot-win-x64.build.log`
+- `dist/hdd-autopilot-win-x64.status`
+- `dist/hdd-autopilot-macos-amd64`
+- `dist/hdd-autopilot-macos-amd64.log`
+- `dist/hdd-autopilot-macos-amd64.status`
+- `dist/hdd-autopilot-macos-arm64`
+- `dist/hdd-autopilot-macos-arm64.log`
+- `dist/hdd-autopilot-macos-arm64.status`
+- `dist/hdd-autopilot-linux-amd64`
+- `dist/hdd-autopilot-linux-amd64.log`
+- `dist/hdd-autopilot-linux-amd64.status`
+- `dist/hdd-autopilot-linux-arm64`
+- `dist/hdd-autopilot-linux-arm64.log`
+- `dist/hdd-autopilot-linux-arm64.status`
 
 运行时查找打包文件时，按顺序检查：
 
@@ -479,6 +485,12 @@ Linux amd64：
 bash scripts/build-linux-amd64.sh
 ```
 
+Linux arm64：
+
+```bash
+bash scripts/build-linux-arm64.sh
+```
+
 macOS / Linux 脚本支持 `--check` 和 `--orchestrated`，release 脚本内部会使用 orchestrated 模式。
 
 ### 默认 release
@@ -495,12 +507,13 @@ bash 下：
 bash scripts/release.sh
 ```
 
-默认会依次尝试四个平台：
+默认会依次尝试五个平台：
 
 - Windows x64
 - macOS amd64
 - macOS arm64
 - Linux amd64
+- Linux arm64
 
 release 脚本会在全部目标都处理完后统一输出汇总。
 
@@ -512,12 +525,25 @@ release 脚本会在全部目标都处理完后统一输出汇总。
 
 如果任一平台是 `failed`，release 最终以失败退出；如果没有 `failed` 但存在 `built_degraded`，release 成功退出并提示部分平台为降级包。
 
+### GitHub Actions 自动打包
+
+仓库包含 `.github/workflows/release.yml`。推送 `v*` tag 或手动触发 workflow 时，会分别构建并上传：
+
+- `hdd-autopilot-win-x64.exe`
+- `hdd-autopilot-macos-amd64`
+- `hdd-autopilot-macos-arm64`
+- `hdd-autopilot-linux-amd64`
+- `hdd-autopilot-linux-arm64`
+
+tag 触发时会把上述正式包上传到 GitHub Release；手动触发时只生成 Actions artifacts，方便先验证。
+
 ### 原生 GPU 后端环境
 
 - Windows CUDA：需要 Windows x64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；缺失时禁用 CUDA 后端，不影响 CPU 包。
 - macOS OpenCL / Metal：需要 macOS host/target 和 Apple SDK；缺失时禁用对应后端，不影响基础包。
 - macOS cross/non-macOS 构建路径可使用 `cargo-zigbuild` 与 `zig`；脚本会根据环境探测可行路径。
-- Linux amd64：当前打基础 CPU 包，交叉构建需要 `cargo-zigbuild` + `zig`，或在 Linux amd64 host 上用本机 C 编译器构建。
+- Linux amd64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux amd64 host 本机 C 编译器。
+- Linux arm64：当前打基础 CPU 包；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux arm64 host 本机 C 编译器。
 
 ## 开发与测试
 
@@ -583,7 +609,7 @@ Windows 下可运行：
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 ```
 
-默认 smoke 会构建并驱动 `dist/hdd-win-x64.exe`，覆盖：
+默认 smoke 会构建并驱动 `dist/hdd-autopilot-win-x64.exe`，覆盖：
 
 - 自动签到
 - 自动羊了个羊

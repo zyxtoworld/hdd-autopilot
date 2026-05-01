@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 $OutputEncoding = [Console]::OutputEncoding
 
 $root = Split-Path -Parent $PSScriptRoot
-$distExe = Join-Path $root 'dist\hdd-win-x64.exe'
+$distExe = Join-Path $root 'dist\hdd-autopilot-win-x64.exe'
 $artifactDir = Join-Path $root '.tmp-smoke-batch'
 $returnMarker = '已返回上一级菜单。'
 $checkinDoneMarker = '全部账号签到完成。'
@@ -96,7 +96,7 @@ function Invoke-HeadlessFlow {
 
     Push-Location $root
     try {
-        & cmd.exe /d /c "chcp 65001>nul && set HDD_SMOKE_AUTO_RETURN=1 && dist\hdd-win-x64.exe < `"$inputFile`" > `"$sessionLog`" 2>&1"
+        & cmd.exe /d /c "chcp 65001>nul && set HDD_SMOKE_AUTO_RETURN=1 && dist\hdd-autopilot-win-x64.exe < `"$inputFile`" > `"$sessionLog`" 2>&1"
         if ($LASTEXITCODE -ne 0) {
             throw "$Name flow exited with code $LASTEXITCODE"
         }

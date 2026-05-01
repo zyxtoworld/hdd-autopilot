@@ -12,6 +12,8 @@ MAC_ARM64_STATUS="failed"
 MAC_ARM64_REASON=""
 LINUX_AMD64_STATUS="failed"
 LINUX_AMD64_REASON=""
+LINUX_ARM64_STATUS="failed"
+LINUX_ARM64_REASON=""
 
 run_windows() {
   echo "Checking Windows x64 build environment..."
@@ -53,8 +55,8 @@ run_windows() {
     WIN_STATUS="failed"
     WIN_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-win-x64.status" ]; then
-      WIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-win-x64.status")"
+    if [ -f "$DIST/hdd-autopilot-win-x64.status" ]; then
+      WIN_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-win-x64.status")"
     else
       WIN_STATUS="built"
     fi
@@ -83,8 +85,8 @@ run_macos_amd64() {
     MAC_AMD64_STATUS="failed"
     MAC_AMD64_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-macos-amd64.status" ]; then
-      MAC_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-macos-amd64.status")"
+    if [ -f "$DIST/hdd-autopilot-macos-amd64.status" ]; then
+      MAC_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-macos-amd64.status")"
     else
       MAC_AMD64_STATUS="built"
     fi
@@ -113,8 +115,8 @@ run_macos_arm64() {
     MAC_ARM64_STATUS="failed"
     MAC_ARM64_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-macos-arm64.status" ]; then
-      MAC_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-macos-arm64.status")"
+    if [ -f "$DIST/hdd-autopilot-macos-arm64.status" ]; then
+      MAC_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-macos-arm64.status")"
     else
       MAC_ARM64_STATUS="built"
     fi
@@ -143,8 +145,8 @@ run_linux_amd64() {
     LINUX_AMD64_STATUS="failed"
     LINUX_AMD64_REASON="(build failed)"
   else
-    if [ -f "$DIST/hdd-linux-amd64.status" ]; then
-      LINUX_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-linux-amd64.status")"
+    if [ -f "$DIST/hdd-autopilot-linux-amd64.status" ]; then
+      LINUX_AMD64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-linux-amd64.status")"
     else
       LINUX_AMD64_STATUS="built"
     fi
@@ -157,10 +159,41 @@ run_linux_amd64() {
   echo
 }
 
+run_linux_arm64() {
+  echo "Checking Linux arm64 build environment..."
+  if ! bash "$ROOT/scripts/build-linux-arm64.sh" --orchestrated --check; then
+    LINUX_ARM64_STATUS="failed"
+    LINUX_ARM64_REASON="(missing build environment)"
+    echo "Linux arm64 check failed, continuing with other platforms."
+    echo
+    return 0
+  fi
+
+  echo
+  echo "Building Linux arm64..."
+  if ! bash "$ROOT/scripts/build-linux-arm64.sh" --orchestrated; then
+    LINUX_ARM64_STATUS="failed"
+    LINUX_ARM64_REASON="(build failed)"
+  else
+    if [ -f "$DIST/hdd-autopilot-linux-arm64.status" ]; then
+      LINUX_ARM64_STATUS="$(tr -d '\r\n' < "$DIST/hdd-autopilot-linux-arm64.status")"
+    else
+      LINUX_ARM64_STATUS="built"
+    fi
+    if [ "$LINUX_ARM64_STATUS" = "built_degraded" ]; then
+      LINUX_ARM64_REASON="(native backend degraded)"
+    else
+      LINUX_ARM64_REASON="(complete)"
+    fi
+  fi
+  echo
+}
+
 run_windows
 run_macos_amd64
 run_macos_arm64
 run_linux_amd64
+run_linux_arm64
 
 echo
 echo "Release package summary:"
@@ -168,13 +201,14 @@ echo "  Windows x64  : $WIN_STATUS $WIN_REASON"
 echo "  macOS amd64  : $MAC_AMD64_STATUS $MAC_AMD64_REASON"
 echo "  macOS arm64  : $MAC_ARM64_STATUS $MAC_ARM64_REASON"
 echo "  Linux amd64  : $LINUX_AMD64_STATUS $LINUX_AMD64_REASON"
+echo "  Linux arm64  : $LINUX_ARM64_STATUS $LINUX_ARM64_REASON"
 echo
 
-if [ "$WIN_STATUS" = "failed" ] || [ "$MAC_AMD64_STATUS" = "failed" ] || [ "$MAC_ARM64_STATUS" = "failed" ] || [ "$LINUX_AMD64_STATUS" = "failed" ]; then
+if [ "$WIN_STATUS" = "failed" ] || [ "$MAC_AMD64_STATUS" = "failed" ] || [ "$MAC_ARM64_STATUS" = "failed" ] || [ "$LINUX_AMD64_STATUS" = "failed" ] || [ "$LINUX_ARM64_STATUS" = "failed" ]; then
   exit 1
 fi
 
-if [ "$WIN_STATUS" = "built_degraded" ] || [ "$MAC_AMD64_STATUS" = "built_degraded" ] || [ "$MAC_ARM64_STATUS" = "built_degraded" ] || [ "$LINUX_AMD64_STATUS" = "built_degraded" ]; then
+if [ "$WIN_STATUS" = "built_degraded" ] || [ "$MAC_AMD64_STATUS" = "built_degraded" ] || [ "$MAC_ARM64_STATUS" = "built_degraded" ] || [ "$LINUX_AMD64_STATUS" = "built_degraded" ] || [ "$LINUX_ARM64_STATUS" = "built_degraded" ]; then
   echo "Release packaging completed with degraded package(s)."
 else
   echo "Release packaging completed."

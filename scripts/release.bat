@@ -13,11 +13,14 @@ set "MAC_ARM64_STATUS=failed"
 set "MAC_ARM64_REASON="
 set "LINUX_AMD64_STATUS=failed"
 set "LINUX_AMD64_REASON="
+set "LINUX_ARM64_STATUS=failed"
+set "LINUX_ARM64_REASON="
 
 call :run_windows
 call :run_macos_amd64
 call :run_macos_arm64
 call :run_linux_amd64
+call :run_linux_arm64
 
 echo.
 echo Release package summary:
@@ -25,17 +28,20 @@ echo   Windows x64  : !WIN_STATUS! !WIN_REASON!
 echo   macOS amd64  : !MAC_AMD64_STATUS! !MAC_AMD64_REASON!
 echo   macOS arm64  : !MAC_ARM64_STATUS! !MAC_ARM64_REASON!
 echo   Linux amd64  : !LINUX_AMD64_STATUS! !LINUX_AMD64_REASON!
+echo   Linux arm64  : !LINUX_ARM64_STATUS! !LINUX_ARM64_REASON!
 echo.
 
 if /I "!WIN_STATUS!"=="failed" exit /b 1
 if /I "!MAC_AMD64_STATUS!"=="failed" exit /b 1
 if /I "!MAC_ARM64_STATUS!"=="failed" exit /b 1
 if /I "!LINUX_AMD64_STATUS!"=="failed" exit /b 1
+if /I "!LINUX_ARM64_STATUS!"=="failed" exit /b 1
 
 if /I "!WIN_STATUS!"=="built_degraded" goto :degraded
 if /I "!MAC_AMD64_STATUS!"=="built_degraded" goto :degraded
 if /I "!MAC_ARM64_STATUS!"=="built_degraded" goto :degraded
 if /I "!LINUX_AMD64_STATUS!"=="built_degraded" goto :degraded
+if /I "!LINUX_ARM64_STATUS!"=="built_degraded" goto :degraded
 
 echo Release packaging completed.
 exit /b 0
@@ -64,8 +70,8 @@ if !BUILD_EXIT! neq 0 (
   set "WIN_STATUS=failed"
   set "WIN_REASON=(build failed)"
 ) else (
-  if exist "%DIST%\hdd-win-x64.status" (
-    set /p WIN_STATUS=<"%DIST%\hdd-win-x64.status"
+  if exist "%DIST%\hdd-autopilot-win-x64.status" (
+    set /p WIN_STATUS=<"%DIST%\hdd-autopilot-win-x64.status"
   ) else (
     set "WIN_STATUS=built"
   )
@@ -107,8 +113,8 @@ if !BUILD_EXIT! neq 0 (
   set "MAC_AMD64_STATUS=failed"
   set "MAC_AMD64_REASON=(build failed)"
 ) else (
-  if exist "%DIST%\hdd-macos-amd64.status" (
-    set /p MAC_AMD64_STATUS=<"%DIST%\hdd-macos-amd64.status"
+  if exist "%DIST%\hdd-autopilot-macos-amd64.status" (
+    set /p MAC_AMD64_STATUS=<"%DIST%\hdd-autopilot-macos-amd64.status"
   ) else (
     set "MAC_AMD64_STATUS=built"
   )
@@ -150,8 +156,8 @@ if !BUILD_EXIT! neq 0 (
   set "MAC_ARM64_STATUS=failed"
   set "MAC_ARM64_REASON=(build failed)"
 ) else (
-  if exist "%DIST%\hdd-macos-arm64.status" (
-    set /p MAC_ARM64_STATUS=<"%DIST%\hdd-macos-arm64.status"
+  if exist "%DIST%\hdd-autopilot-macos-arm64.status" (
+    set /p MAC_ARM64_STATUS=<"%DIST%\hdd-autopilot-macos-arm64.status"
   ) else (
     set "MAC_ARM64_STATUS=built"
   )
@@ -193,8 +199,8 @@ if !BUILD_EXIT! neq 0 (
   set "LINUX_AMD64_STATUS=failed"
   set "LINUX_AMD64_REASON=(build failed)"
 ) else (
-  if exist "%DIST%\hdd-linux-amd64.status" (
-    set /p LINUX_AMD64_STATUS=<"%DIST%\hdd-linux-amd64.status"
+  if exist "%DIST%\hdd-autopilot-linux-amd64.status" (
+    set /p LINUX_AMD64_STATUS=<"%DIST%\hdd-autopilot-linux-amd64.status"
   ) else (
     set "LINUX_AMD64_STATUS=built"
   )
@@ -202,6 +208,49 @@ if !BUILD_EXIT! neq 0 (
     set "LINUX_AMD64_REASON=(native backend degraded)"
   ) else (
     set "LINUX_AMD64_REASON=(complete)"
+  )
+)
+echo.
+exit /b 0
+
+:run_linux_arm64
+echo Checking Linux arm64 build environment...
+where bash >nul 2>&1
+if errorlevel 1 (
+  set "LINUX_ARM64_STATUS=failed"
+  set "LINUX_ARM64_REASON=(missing bash)"
+  echo Linux arm64 check failed, continuing with other platforms.
+  echo.
+  exit /b 0
+)
+
+bash "%ROOT_BASH%/scripts/build-linux-arm64.sh" --orchestrated --check
+set "CHECK_EXIT=%ERRORLEVEL%"
+if !CHECK_EXIT! neq 0 (
+  set "LINUX_ARM64_STATUS=failed"
+  set "LINUX_ARM64_REASON=(missing build environment)"
+  echo Linux arm64 check failed, continuing with other platforms.
+  echo.
+  exit /b 0
+)
+
+echo.
+echo Building Linux arm64...
+bash "%ROOT_BASH%/scripts/build-linux-arm64.sh" --orchestrated
+set "BUILD_EXIT=%ERRORLEVEL%"
+if !BUILD_EXIT! neq 0 (
+  set "LINUX_ARM64_STATUS=failed"
+  set "LINUX_ARM64_REASON=(build failed)"
+) else (
+  if exist "%DIST%\hdd-autopilot-linux-arm64.status" (
+    set /p LINUX_ARM64_STATUS=<"%DIST%\hdd-autopilot-linux-arm64.status"
+  ) else (
+    set "LINUX_ARM64_STATUS=built"
+  )
+  if /I "!LINUX_ARM64_STATUS!"=="built_degraded" (
+    set "LINUX_ARM64_REASON=(native backend degraded)"
+  ) else (
+    set "LINUX_ARM64_REASON=(complete)"
   )
 )
 echo.

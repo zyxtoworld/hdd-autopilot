@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT_DIR="$ROOT/dist"
 TARGET="x86_64-apple-darwin"
 OUTPUT="$ROOT/target/$TARGET/release/hdd"
-ARTIFACT="$ARTIFACT_DIR/hdd-macos-amd64"
+ARTIFACT="$ARTIFACT_DIR/hdd-autopilot-macos-amd64"
 STATUS_FILE="$ARTIFACT.status"
 CHECK_ONLY="${1:-}"
 ORCHESTRATED=0
@@ -95,7 +95,7 @@ if [ -z "$PAYLOAD_LINE" ]; then
   exit 1
 fi
 TMPDIR_VALUE="${TMPDIR:-/tmp}"
-TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-macos-amd64.XXXXXX")
+TMPFILE=$(mktemp "$TMPDIR_VALUE/hdd-autopilot-macos-amd64.XXXXXX")
 cleanup() {
   rm -f "$TMPFILE"
 }
@@ -128,7 +128,7 @@ if ! check_env; then
 fi
 mkdir -p "$ARTIFACT_DIR"
 
-echo "正在构建 hdd-macos-amd64..."
+echo "正在构建 hdd-autopilot-macos-amd64..."
 rustup target add "$TARGET" >/dev/null 2>&1 || true
 BUILD_LOG="$ARTIFACT.log"
 rm -f "$BUILD_LOG" "$STATUS_FILE"
