@@ -95,6 +95,5 @@ pub fn run_auto_tuned_gpu_with_cancel(
     mode: Mode,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), MiningError> {
-    let config = default_config(mode);
-    Runner::new(config, Arc::clone(cancel))?.run_gpu_only()
+    run_auto_tuned_with_cancel(mode, cancel)
 }

@@ -114,20 +114,8 @@ impl Runner {
         ));
         self.print_output_paths();
 
-        self.run_loop(false)
+        self.run_loop()
     }
-
-    pub(crate) fn run_gpu_only(&self) -> Result<(), MiningError> {
-        self.log_line("开始运行 GPU 挖矿模式。");
-        self.log(format_args!(
-            "当前模式：{}。",
-            mode_description(self.config.mode)
-        ));
-        self.print_output_paths();
-
-        self.run_loop(false)
-    }
-
     fn print_output_paths(&self) {
         match self.config.mode {
             crate::Mode::InviteOnly => {
@@ -158,7 +146,6 @@ impl Runner {
     fn collect_backend_candidates(
         &self,
         job: &ComputeJob,
-        include_cpu: bool,
     ) -> Result<Vec<SelectedBackend>, MiningError> {
         let cache_key = BenchmarkKey::from(job);
         if let Some(cached) = self
@@ -171,43 +158,36 @@ impl Runner {
             return Ok(self.filter_blacklisted(cached));
         }
 
-        let candidates = if include_cpu {
-            self.log_line("CPU 和 GPU 自动调优并行启动。");
-            let cpu_runner = self.clone();
-            let cpu_job = job.clone();
-            let cpu_handle = thread::spawn(move || {
-                let cpu_best = cpu_runner
-                    .cpu_backend
-                    .find_best_benchmark_config_with_cancel_and_output(
-                        &cpu_job,
-                        cpu_runner.config.thread_count,
-                        &cpu_runner.cancel,
-                        &cpu_runner.config.output,
-                    )?;
-                cpu_runner.log(format_args!(
-                    "CPU 候选可用：线程数 {}，并发数 {}，预计速度约 {:.2} 次/秒。",
-                    cpu_best.workers, cpu_best.concurrency, cpu_best.attempts_per_s
-                ));
-                Ok(vec![SelectedBackend::new(
-                    cpu_runner.cpu_backend.descriptor(),
-                    cpu_best,
-                )])
-            });
+        self.log_line("CPU 和 GPU 自动调优并行启动。");
+        let cpu_runner = self.clone();
+        let cpu_job = job.clone();
+        let cpu_handle = thread::spawn(move || {
+            let cpu_best = cpu_runner
+                .cpu_backend
+                .find_best_benchmark_config_with_cancel_and_output(
+                    &cpu_job,
+                    cpu_runner.config.thread_count,
+                    &cpu_runner.cancel,
+                    &cpu_runner.config.output,
+                )?;
+            cpu_runner.log(format_args!(
+                "CPU 候选可用：线程数 {}，并发数 {}，预计速度约 {:.2} 次/秒。",
+                cpu_best.workers, cpu_best.concurrency, cpu_best.attempts_per_s
+            ));
+            Ok(vec![SelectedBackend::new(
+                cpu_runner.cpu_backend.descriptor(),
+                cpu_best,
+            )])
+        });
 
-            let gpu_runner = self.clone();
-            let gpu_job = job.clone();
-            let gpu_handle =
-                thread::spawn(move || gpu_runner.collect_gpu_backend_candidates(&gpu_job));
+        let gpu_runner = self.clone();
+        let gpu_job = job.clone();
+        let gpu_handle = thread::spawn(move || gpu_runner.collect_gpu_backend_candidates(&gpu_job));
 
-            let cpu_candidates = join_candidate_thread("CPU", cpu_handle);
-            let gpu_candidates = join_candidate_thread("GPU", gpu_handle);
-            let mut candidates = cpu_candidates?;
-            candidates.extend(gpu_candidates?);
-            candidates
-        } else {
-            self.log_line("当前模式不启用 CPU 候选。");
-            self.collect_gpu_backend_candidates(job)?
-        };
+        let cpu_candidates = join_candidate_thread("CPU", cpu_handle);
+        let gpu_candidates = join_candidate_thread("GPU", gpu_handle);
+        let mut candidates = cpu_candidates?;
+        candidates.extend(gpu_candidates?);
 
         self.benchmark_cache
             .lock()
@@ -217,10 +197,10 @@ impl Runner {
         Ok(self.filter_blacklisted(candidates))
     }
 
-    fn run_loop(&self, gpu_only: bool) -> Result<(), MiningError> {
+    fn run_loop(&self) -> Result<(), MiningError> {
         loop {
             self.check_cancel()?;
-            match self.run_cycle(gpu_only) {
+            match self.run_cycle() {
                 Ok(()) => {
                     self.log_line("本轮已经命中，等待下一轮开放。");
                     self.sleep_with_cancel(self.config.success_delay)?;
@@ -459,7 +439,7 @@ impl Runner {
         Ok(None)
     }
 
-    fn run_cycle(&self, gpu_only: bool) -> Result<(), MiningError> {
+    fn run_cycle(&self) -> Result<(), MiningError> {
         self.check_cancel()?;
         self.log_line("获取矿池状态...");
         let status = self.client.get_status().map_err(|error| match error {
@@ -506,7 +486,7 @@ impl Runner {
         ));
 
         let job = ComputeJob::from(&challenge);
-        let run_candidates = self.collect_backend_candidates(&job, !gpu_only)?;
+        let run_candidates = self.collect_backend_candidates(&job)?;
         let selected_workers = select_backend_workers(&run_candidates);
         if selected_workers.is_empty() {
             return Err(MiningError::Message(

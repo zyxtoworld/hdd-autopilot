@@ -2,6 +2,7 @@ pub mod cpu;
 pub mod cuda;
 pub mod metal;
 pub mod opencl;
+pub mod tuning;
 pub mod types;
 
 use crate::MiningError;
