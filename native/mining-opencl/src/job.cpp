@@ -4,6 +4,23 @@
 #include <sstream>
 
 namespace app {
+namespace {
+
+void append_uint64_ascii(std::string& output, std::uint64_t value) {
+    if (value == 0) {
+        output.push_back('0');
+        return;
+    }
+    char digits[20];
+    auto index = sizeof(digits);
+    while (value > 0) {
+        digits[--index] = static_cast<char>('0' + (value % 10));
+        value /= 10;
+    }
+    output.append(digits + index, sizeof(digits) - index);
+}
+
+} // namespace
 
 Job::Job(JobConfig config)
     : seed_bytes_(config.seed.begin(), config.seed.end()),
@@ -32,7 +49,7 @@ const std::string& Job::pass_prefix() const noexcept {
 void Job::write_password_for_nonce(std::string& output, std::uint64_t nonce) const {
     output.clear();
     output.append(pass_prefix_);
-    output.append(std::to_string(nonce));
+    append_uint64_ascii(output, nonce);
 }
 
 std::string Job::password_for_nonce(std::uint64_t nonce) const {

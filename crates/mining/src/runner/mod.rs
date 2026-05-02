@@ -27,7 +27,7 @@ use crate::{
 
 use self::support::{
     BenchmarkKey, RoundStatus, SelectedBackend, append_reward_code, check_cancel,
-    select_backend_workers, sleep_with_cancel,
+    filter_candidates_for_params, select_backend_workers, sleep_with_cancel,
 };
 
 #[derive(Debug, Clone)]
@@ -155,7 +155,7 @@ impl Runner {
             .get(&cache_key)
             .cloned()
         {
-            return Ok(self.filter_blacklisted(cached));
+            return Ok(self.filter_blacklisted(filter_candidates_for_params(cached, &cache_key)));
         }
 
         self.log_line("CPU 和 GPU 自动调优并行启动。");
@@ -177,6 +177,7 @@ impl Runner {
             Ok(vec![SelectedBackend::new(
                 cpu_runner.cpu_backend.descriptor(),
                 cpu_best,
+                BenchmarkKey::from(&cpu_job),
             )])
         });
 
@@ -188,11 +189,12 @@ impl Runner {
         let gpu_candidates = join_candidate_thread("GPU", gpu_handle);
         let mut candidates = cpu_candidates?;
         candidates.extend(gpu_candidates?);
+        let candidates = filter_candidates_for_params(candidates, &cache_key);
 
         self.benchmark_cache
             .lock()
             .expect("benchmark cache poisoned")
-            .insert(cache_key, candidates.clone());
+            .insert(cache_key.clone(), candidates.clone());
 
         Ok(self.filter_blacklisted(candidates))
     }
@@ -487,7 +489,8 @@ impl Runner {
 
         let job = ComputeJob::from(&challenge);
         let run_candidates = self.collect_backend_candidates(&job)?;
-        let selected_workers = select_backend_workers(&run_candidates);
+        let params_key = BenchmarkKey::from(&job);
+        let selected_workers = select_backend_workers(&run_candidates, &params_key);
         if selected_workers.is_empty() {
             return Err(MiningError::Message(
                 "当前计算参数下没有可用后端。".to_string(),

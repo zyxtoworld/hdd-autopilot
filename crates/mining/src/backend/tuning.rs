@@ -27,16 +27,28 @@ pub fn recommended_gpu_tuning_shapes(
     let anchor = recommended_anchor_batch(profile, max_batch);
     let mut batches = Vec::new();
     for batch_size in powers_of_two_up_to(max_batch) {
-        batches.push(batch_size);
+        add_batch_candidate(&mut batches, batch_size, max_batch);
     }
+    add_batch_candidate(&mut batches, anchor, max_batch);
+    add_scaled_batch_candidate(&mut batches, anchor, 3, 4, max_batch);
+    add_scaled_batch_candidate(&mut batches, anchor, 3, 2, max_batch);
+    add_scaled_batch_candidate(&mut batches, anchor, 5, 2, max_batch);
+    add_scaled_batch_candidate(&mut batches, max_batch, 1, 2, max_batch);
+    add_scaled_batch_candidate(&mut batches, max_batch, 3, 4, max_batch);
     if let Some(profile) = profile
         && profile.compute_units > 0
     {
         let units = profile.compute_units as usize;
-        for candidate in [units / 2, units, units * 2, units * 4] {
-            if candidate > 0 && candidate <= max_batch {
-                batches.push(candidate);
-            }
+        for candidate in [
+            units / 2,
+            units,
+            units * 2,
+            units * 3,
+            units * 4,
+            units * 6,
+            units * 8,
+        ] {
+            add_batch_candidate(&mut batches, candidate, max_batch);
         }
     }
     batches.sort_unstable();
@@ -84,8 +96,14 @@ fn recommended_max_batch(
     } else {
         90
     };
+    let high_memory_device = profile.global_memory_bytes >= 12 * 1024 * 1024 * 1024
+        || profile.max_alloc_bytes >= 8 * 1024 * 1024 * 1024;
     let batch_cap = if profile.low_power {
         512
+    } else if profile.unified_memory {
+        1024
+    } else if high_memory_device && profile.compute_units >= 48 {
+        4096
     } else if profile.compute_units >= 32 || profile.max_threads_per_group >= 1024 {
         2048
     } else {
@@ -144,6 +162,29 @@ fn powers_of_two_up_to(max_batch: usize) -> Vec<usize> {
         values.push(max_batch);
     }
     values
+}
+
+fn add_batch_candidate(batches: &mut Vec<usize>, candidate: usize, max_batch: usize) {
+    if candidate > 0 && candidate <= max_batch {
+        batches.push(candidate);
+    }
+}
+
+fn add_scaled_batch_candidate(
+    batches: &mut Vec<usize>,
+    base: usize,
+    numerator: usize,
+    denominator: usize,
+    max_batch: usize,
+) {
+    if denominator == 0 {
+        return;
+    }
+    add_batch_candidate(
+        batches,
+        base.saturating_mul(numerator) / denominator,
+        max_batch,
+    );
 }
 
 fn strategy_order(profile: Option<GpuDeviceProfile>) -> [(bool, bool); 3] {
@@ -235,5 +276,33 @@ mod tests {
         assert_eq!(shapes[0].batch_size, 16);
         assert!(!shapes[0].by_segment);
         assert!(!shapes[0].precompute_refs);
+    }
+
+    #[test]
+    fn recommended_gpu_tuning_shapes_adds_refinement_batches() {
+        let shapes = recommended_gpu_tuning_shapes(
+            Some(GpuDeviceProfile {
+                global_memory_bytes: 48 * 1024 * 1024 * 1024,
+                max_alloc_bytes: 48 * 1024 * 1024 * 1024,
+                compute_units: 96,
+                max_threads_per_group: 1024,
+                local_memory_bytes: 128 * 1024,
+                subgroup_size: 32,
+                unified_memory: false,
+                low_power: false,
+                removable: false,
+            }),
+            8 * 1024,
+            1,
+        );
+        let batches = shapes
+            .iter()
+            .map(|shape| shape.batch_size)
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(batches.contains(&192));
+        assert!(batches.contains(&288));
+        assert!(batches.contains(&384));
+        assert!(batches.iter().any(|batch| *batch > 2048));
     }
 }

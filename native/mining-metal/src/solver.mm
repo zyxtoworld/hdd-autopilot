@@ -454,34 +454,38 @@ BatchResult mine_batch_gpu(const Job& job,
                            PreparedGpuBatch& prepared,
                            std::vector<std::string>& passwords) {
     for (std::size_t i = 0; i < config.batch_size; ++i) {
-        if (stop.load()) {
+        if (stop.load(std::memory_order_relaxed)) {
             break;
         }
         job.write_password_for_nonce(passwords[i], start_nonce + i);
         prepared.params.fillFirstBlocks(prepared.map_input_memory(i), passwords[i].data(), passwords[i].size(), argon2::ARGON2_ID, argon2::ARGON2_VERSION_13);
     }
 
-    if (stop.load()) {
+    if (stop.load(std::memory_order_relaxed)) {
         return {};
     }
 
     prepared.run_once();
 
     BatchResult result;
+    std::int64_t local_attempts = 0;
     for (std::size_t i = 0; i < config.batch_size; ++i) {
-        if (stop.load()) {
+        if (stop.load(std::memory_order_relaxed)) {
             break;
         }
         std::array<std::uint8_t, kDigestSize> digest{};
         prepared.params.finalize(digest.data(), prepared.map_output_memory(i));
-        attempts.fetch_add(1);
+        ++local_attempts;
         if (meets_difficulty(digest.data(), digest.size(), job.difficulty_bits())) {
             result.found = true;
             result.nonce = start_nonce + i;
             result.digest = digest;
-            stop.store(true);
+            stop.store(true, std::memory_order_relaxed);
             break;
         }
+    }
+    if (local_attempts > 0) {
+        attempts.fetch_add(local_attempts, std::memory_order_relaxed);
     }
     return result;
 }

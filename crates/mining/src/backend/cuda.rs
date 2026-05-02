@@ -7,7 +7,7 @@ use mining_cuda_sys::{CudaDeviceInfo, CudaSolverConfig};
 use mining_cuda_sys as cuda_sys;
 
 use crate::backend::cpu::{
-    CPU_BENCHMARK_CASE_DURATION, ComputeJob, benchmark_job_for_shape, compute_digest, hex_lower,
+    CPU_BENCHMARK_CASE_DURATION, ComputeJob, benchmark_job_for_tuning, compute_digest, hex_lower,
 };
 use crate::backend::types::{
     BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, GpuBenchmarkConfig,
@@ -165,7 +165,7 @@ impl CudaBackend {
         descriptor: &BackendDescriptor,
         job: &ComputeJob,
     ) -> Result<BenchmarkResult, MiningError> {
-        let benchmark_job = benchmark_job_for_shape(job);
+        let benchmark_job = benchmark_job_for_tuning(job);
         let default_config = self.default_solver_config_for_job(descriptor, &benchmark_job)?;
         self.run_runtime_loop_benchmark_for_device(
             descriptor.device_index.unwrap_or(0),
@@ -250,7 +250,7 @@ impl CudaBackend {
             by_segment,
             precompute_refs,
         };
-        let benchmark_job = benchmark_job_for_shape(job);
+        let benchmark_job = benchmark_job_for_tuning(job);
         let raw_job = cuda_sys::CudaJob {
             seed_bytes: &benchmark_job.seed_bytes,
             pass_prefix: &benchmark_job.pass_prefix,

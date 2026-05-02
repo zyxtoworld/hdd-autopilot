@@ -17,11 +17,16 @@ pub(super) struct SelectedBackend {
     pub(super) name: String,
     pub(super) device_id: String,
     pub(super) device_index: Option<usize>,
+    pub(super) params_key: BenchmarkKey,
     pub(super) profile: BenchmarkResult,
 }
 
 impl SelectedBackend {
-    pub(super) fn new(descriptor: &BackendDescriptor, profile: BenchmarkResult) -> Self {
+    pub(super) fn new(
+        descriptor: &BackendDescriptor,
+        profile: BenchmarkResult,
+        params_key: BenchmarkKey,
+    ) -> Self {
         Self {
             kind: descriptor.kind,
             label: match descriptor.kind {
@@ -33,6 +38,7 @@ impl SelectedBackend {
             name: descriptor.name.clone(),
             device_id: descriptor.device_id.clone(),
             device_index: descriptor.device_index,
+            params_key,
             profile,
         }
     }
@@ -61,10 +67,11 @@ impl SelectedBackend {
 pub(super) fn select_best_backend_by_kind(
     candidates: &[SelectedBackend],
     kind: BackendKind,
+    params_key: &BenchmarkKey,
 ) -> Option<SelectedBackend> {
     candidates
         .iter()
-        .filter(|candidate| candidate.kind == kind)
+        .filter(|candidate| candidate.kind == kind && &candidate.params_key == params_key)
         .cloned()
         .max_by(|left, right| {
             left.profile
@@ -73,14 +80,19 @@ pub(super) fn select_best_backend_by_kind(
         })
 }
 
-pub(super) fn select_backend_workers(candidates: &[SelectedBackend]) -> Vec<SelectedBackend> {
+pub(super) fn select_backend_workers(
+    candidates: &[SelectedBackend],
+    params_key: &BenchmarkKey,
+) -> Vec<SelectedBackend> {
     let mut selected = Vec::new();
-    if let Some(cpu) = select_best_backend_by_kind(candidates, BackendKind::Cpu) {
+    if let Some(cpu) = select_best_backend_by_kind(candidates, BackendKind::Cpu, params_key) {
         selected.push(cpu);
     }
     let mut gpu_candidates = candidates
         .iter()
-        .filter(|candidate| candidate.kind != BackendKind::Cpu)
+        .filter(|candidate| {
+            candidate.kind != BackendKind::Cpu && &candidate.params_key == params_key
+        })
         .cloned()
         .collect::<Vec<_>>();
     gpu_candidates.sort_by(|left, right| {
@@ -99,6 +111,16 @@ pub(super) fn select_backend_workers(candidates: &[SelectedBackend]) -> Vec<Sele
         selected.push(gpu);
     }
     selected
+}
+
+pub(super) fn filter_candidates_for_params(
+    candidates: Vec<SelectedBackend>,
+    params_key: &BenchmarkKey,
+) -> Vec<SelectedBackend> {
+    candidates
+        .into_iter()
+        .filter(|candidate| &candidate.params_key == params_key)
+        .collect()
 }
 
 fn is_duplicate_gpu_backend(left: &SelectedBackend, right: &SelectedBackend) -> bool {
@@ -142,17 +164,23 @@ pub(super) struct RoundStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct BenchmarkKey {
+    pub(super) seed_bytes: Vec<u8>,
+    pub(super) pass_prefix: Vec<u8>,
     pub(super) memory_cost_kib: u32,
     pub(super) time_cost: u32,
     pub(super) parallelism: u32,
+    pub(super) difficulty_bits: i32,
 }
 
 impl From<&ComputeJob> for BenchmarkKey {
     fn from(job: &ComputeJob) -> Self {
         Self {
+            seed_bytes: job.seed_bytes.clone(),
+            pass_prefix: job.pass_prefix.clone(),
             memory_cost_kib: job.memory_cost_kib,
             time_cost: job.time_cost,
             parallelism: job.parallelism,
+            difficulty_bits: job.difficulty_bits,
         }
     }
 }
@@ -250,6 +278,17 @@ pub(super) fn sleep_with_cancel(cancel: &AtomicBool, wait: Duration) -> Result<(
 mod tests {
     use super::*;
 
+    fn params_key() -> BenchmarkKey {
+        BenchmarkKey {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"seed-a:1:visitor:1:salt:".to_vec(),
+            memory_cost_kib: 64 * 1024,
+            time_cost: 1,
+            parallelism: 1,
+            difficulty_bits: 12,
+        }
+    }
+
     fn backend(
         kind: BackendKind,
         device_id: &str,
@@ -270,6 +309,7 @@ mod tests {
                 BackendKind::Cpu => None,
                 BackendKind::Cuda | BackendKind::Metal | BackendKind::Opencl => Some(0),
             },
+            params_key: params_key(),
             profile: BenchmarkResult {
                 workers,
                 concurrency: workers,
@@ -289,7 +329,7 @@ mod tests {
         let cuda = backend(BackendKind::Cuda, "cuda:0", 250.0, 4096);
         let metal = backend(BackendKind::Metal, "metal:0", 220.0, 2048);
 
-        let selected = select_backend_workers(&[cpu_slow, cpu_fast, cuda, metal]);
+        let selected = select_backend_workers(&[cpu_slow, cpu_fast, cuda, metal], &params_key());
 
         assert_eq!(selected.len(), 3);
         assert_eq!(selected[0].kind, BackendKind::Cpu);
@@ -309,7 +349,7 @@ mod tests {
         opencl.name =
             "OpenCL Device 'NVIDIA GeForce RTX 4090' (NVIDIA) [GPU] @ NVIDIA CUDA".to_string();
 
-        let selected = select_backend_workers(&[cpu, opencl, cuda]);
+        let selected = select_backend_workers(&[cpu, opencl, cuda], &params_key());
 
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].kind, BackendKind::Cpu);
@@ -317,7 +357,25 @@ mod tests {
     }
 
     #[test]
-    fn benchmark_key_ignores_difficulty_bits() {
+    fn select_backend_workers_filters_mismatched_http_params() {
+        let cpu = backend(BackendKind::Cpu, "cpu:fast", 180.0, 8);
+        let mut stale_gpu = backend(BackendKind::Cuda, "cuda:stale", 1_000.0, 4096);
+        stale_gpu.params_key = BenchmarkKey {
+            memory_cost_kib: 128 * 1024,
+            ..params_key()
+        };
+        let current_gpu = backend(BackendKind::Opencl, "opencl:current", 220.0, 2048);
+
+        let selected = select_backend_workers(&[stale_gpu, current_gpu], &params_key());
+        let filtered = filter_candidates_for_params(vec![cpu], &params_key());
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].kind, BackendKind::Opencl);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn benchmark_key_uses_difficulty_bits() {
         let left = ComputeJob {
             seed_bytes: b"seed-a".to_vec(),
             pass_prefix: b"prefix-a:".to_vec(),
@@ -335,7 +393,29 @@ mod tests {
             difficulty_bits: 24,
         };
 
-        assert_eq!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+        assert_ne!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
+    }
+
+    #[test]
+    fn benchmark_key_uses_http_seed_and_pass_prefix() {
+        let left = ComputeJob {
+            seed_bytes: b"seed-a".to_vec(),
+            pass_prefix: b"seed-a:1:visitor:1:salt:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+        let right = ComputeJob {
+            seed_bytes: b"seed-b".to_vec(),
+            pass_prefix: b"seed-b:1:visitor:2:salt:".to_vec(),
+            time_cost: 1,
+            memory_cost_kib: 64 * 1024,
+            parallelism: 1,
+            difficulty_bits: 12,
+        };
+
+        assert_ne!(BenchmarkKey::from(&left), BenchmarkKey::from(&right));
     }
 
     #[test]

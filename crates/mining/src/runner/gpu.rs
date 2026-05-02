@@ -5,7 +5,7 @@ use crate::error::is_interrupted_error;
 use crate::{MiningError, humanize_error};
 
 use super::Runner;
-use super::support::{SelectedBackend, localized_bool};
+use super::support::{BenchmarkKey, SelectedBackend, localized_bool};
 
 impl Runner {
     pub(super) fn collect_gpu_backend_candidates(
@@ -36,6 +36,7 @@ impl Runner {
         self.collect_gpu_candidates_by_device(
             "CUDA",
             self.cuda_backend.list_devices()?,
+            BenchmarkKey::from(job),
             |descriptor| {
                 self.cuda_backend
                     .quick_screen_benchmark_for_descriptor(descriptor, job)
@@ -62,6 +63,7 @@ impl Runner {
         self.collect_gpu_candidates_by_device(
             "OpenCL",
             self.opencl_backend.list_devices()?,
+            BenchmarkKey::from(job),
             |descriptor| {
                 self.opencl_backend
                     .quick_screen_benchmark_for_descriptor(descriptor, job)
@@ -88,6 +90,7 @@ impl Runner {
         self.collect_gpu_candidates_by_device(
             "Metal",
             self.metal_backend.list_devices()?,
+            BenchmarkKey::from(job),
             |descriptor| {
                 self.metal_backend
                     .quick_screen_benchmark_for_descriptor(descriptor, job)
@@ -100,6 +103,7 @@ impl Runner {
         &self,
         label: &str,
         devices: Vec<BackendDescriptor>,
+        params_key: BenchmarkKey,
         screen: FScreen,
         tune: FTune,
     ) -> Result<Vec<SelectedBackend>, MiningError>
@@ -164,7 +168,11 @@ impl Runner {
                         localized_bool(result.precompute_refs),
                         result.attempts_per_s
                     ));
-                    candidates.push(SelectedBackend::new(&descriptor, result));
+                    candidates.push(SelectedBackend::new(
+                        &descriptor,
+                        result,
+                        params_key.clone(),
+                    ));
                 }
                 Err(error) => {
                     if is_interrupted_error(&error) {

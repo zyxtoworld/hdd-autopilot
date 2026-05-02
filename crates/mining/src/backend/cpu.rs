@@ -13,6 +13,7 @@ use crate::backend::types::{
 use crate::error::{MiningError, interrupted_error};
 
 pub(crate) const CPU_BENCHMARK_CASE_DURATION: Duration = Duration::from_secs(2);
+const CPU_ATTEMPT_FLUSH_INTERVAL: i64 = 256;
 
 struct CpuDigestEngine {
     argon2: Argon2<'static>,
@@ -61,6 +62,7 @@ pub struct ComputeJob {
 const BENCHMARK_SEED_BYTES: &[u8] = b"benchmark-seed-fixed";
 const BENCHMARK_PASS_PREFIX: &[u8] =
     b"benchmark-seed-fixed:1:benchmark-visitor-fixed:1:benchmark-session-salt-fixed:";
+const BENCHMARK_NO_HIT_DIFFICULTY_BITS: i32 = 257;
 
 pub(crate) fn default_benchmark_job() -> ComputeJob {
     ComputeJob {
@@ -69,18 +71,18 @@ pub(crate) fn default_benchmark_job() -> ComputeJob {
         time_cost: 1,
         memory_cost_kib: 64 * 1024,
         parallelism: 1,
-        difficulty_bits: 255,
+        difficulty_bits: BENCHMARK_NO_HIT_DIFFICULTY_BITS,
     }
 }
 
-pub(crate) fn benchmark_job_for_shape(job: &ComputeJob) -> ComputeJob {
+pub(crate) fn benchmark_job_for_tuning(job: &ComputeJob) -> ComputeJob {
     ComputeJob {
-        seed_bytes: BENCHMARK_SEED_BYTES.to_vec(),
-        pass_prefix: BENCHMARK_PASS_PREFIX.to_vec(),
+        seed_bytes: job.seed_bytes.clone(),
+        pass_prefix: job.pass_prefix.clone(),
         time_cost: job.time_cost,
         memory_cost_kib: job.memory_cost_kib,
         parallelism: job.parallelism.max(1),
-        difficulty_bits: 255,
+        difficulty_bits: BENCHMARK_NO_HIT_DIFFICULTY_BITS,
     }
 }
 
@@ -293,7 +295,7 @@ impl CpuBackend {
         duration: Duration,
         cancel: &Arc<AtomicBool>,
     ) -> Result<BenchmarkResult, MiningError> {
-        let job = benchmark_job_for_shape(job);
+        let job = benchmark_job_for_tuning(job);
         let attempts = Arc::new(AtomicI64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
@@ -330,12 +332,15 @@ impl CpuBackend {
                         hasher.compute_into(&job, *nonce, &mut password, &mut output);
                         *nonce += worker_total;
                         local_attempts += 1;
-                        if local_attempts % 64 == 0 {
-                            attempts.fetch_add(64, Ordering::Relaxed);
+                        if local_attempts % CPU_ATTEMPT_FLUSH_INTERVAL == 0 {
+                            attempts.fetch_add(CPU_ATTEMPT_FLUSH_INTERVAL, Ordering::Relaxed);
                         }
                     }
                 }
-                attempts.fetch_add(local_attempts % 64, Ordering::Relaxed);
+                attempts.fetch_add(
+                    local_attempts % CPU_ATTEMPT_FLUSH_INTERVAL,
+                    Ordering::Relaxed,
+                );
             }));
         }
         for handle in handles {
@@ -396,23 +401,23 @@ impl CpuBackend {
                     .map(|shard_index| start_nonce.saturating_add(shard_index))
                     .collect::<Vec<_>>();
                 let upper_bound = start_nonce.saturating_add(nonce_count);
-                while !stop.load(Ordering::SeqCst) && !cancel.load(Ordering::SeqCst) {
+                while !stop.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
                     let mut advanced = false;
                     for nonce in &mut next_nonces {
                         if *nonce >= upper_bound
-                            || stop.load(Ordering::SeqCst)
-                            || cancel.load(Ordering::SeqCst)
+                            || stop.load(Ordering::Relaxed)
+                            || cancel.load(Ordering::Relaxed)
                         {
                             continue;
                         }
                         advanced = true;
                         hasher.compute_into(&job, *nonce, &mut password, &mut output);
                         local_attempts += 1;
-                        if local_attempts % 64 == 0 {
-                            attempts.fetch_add(64, Ordering::Relaxed);
+                        if local_attempts % CPU_ATTEMPT_FLUSH_INTERVAL == 0 {
+                            attempts.fetch_add(CPU_ATTEMPT_FLUSH_INTERVAL, Ordering::Relaxed);
                         }
                         if meets_difficulty(&output, job.difficulty_bits) {
-                            let pending = local_attempts % 64;
+                            let pending = local_attempts % CPU_ATTEMPT_FLUSH_INTERVAL;
                             let attempt_count = if pending == 0 {
                                 attempts.load(Ordering::Relaxed)
                             } else {
@@ -432,7 +437,10 @@ impl CpuBackend {
                         break;
                     }
                 }
-                attempts.fetch_add(local_attempts % 64, Ordering::Relaxed);
+                attempts.fetch_add(
+                    local_attempts % CPU_ATTEMPT_FLUSH_INTERVAL,
+                    Ordering::Relaxed,
+                );
             }));
         }
         drop(sender);
@@ -535,5 +543,26 @@ mod tests {
         assert!(result.concurrency <= 2);
         assert!(result.workers >= 1);
         assert!(result.concurrency >= 1);
+    }
+
+    #[test]
+    fn benchmark_job_for_tuning_preserves_http_challenge_inputs() {
+        let job = ComputeJob {
+            seed_bytes: b"http-seed".to_vec(),
+            pass_prefix: b"http-seed:8:visitor:7:salt:".to_vec(),
+            time_cost: 3,
+            memory_cost_kib: 96 * 1024,
+            parallelism: 2,
+            difficulty_bits: 17,
+        };
+
+        let benchmark = benchmark_job_for_tuning(&job);
+
+        assert_eq!(benchmark.seed_bytes, job.seed_bytes);
+        assert_eq!(benchmark.pass_prefix, job.pass_prefix);
+        assert_eq!(benchmark.time_cost, job.time_cost);
+        assert_eq!(benchmark.memory_cost_kib, job.memory_cost_kib);
+        assert_eq!(benchmark.parallelism, job.parallelism);
+        assert!(benchmark.difficulty_bits > 256);
     }
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use mining_metal_sys as metal_sys;
 use mining_metal_sys::{MetalDeviceInfo, MetalSolverConfig};
 
-use crate::backend::cpu::{ComputeJob, benchmark_job_for_shape, compute_digest, hex_lower};
+use crate::backend::cpu::{ComputeJob, benchmark_job_for_tuning, compute_digest, hex_lower};
 use crate::backend::cuda::{GPU_DEVICE_SCREENING_DURATION, GPU_RUNTIME_BENCHMARK_DURATION};
 use crate::backend::types::{
     BackendDescriptor, BackendKind, BenchmarkResult, GPUAvailability, GpuBenchmarkConfig,
@@ -161,7 +161,7 @@ impl MetalBackend {
         descriptor: &BackendDescriptor,
         job: &ComputeJob,
     ) -> Result<BenchmarkResult, MiningError> {
-        let benchmark_job = benchmark_job_for_shape(job);
+        let benchmark_job = benchmark_job_for_tuning(job);
         let default_config = self.default_solver_config_for_job(descriptor, &benchmark_job)?;
         self.run_runtime_loop_benchmark_for_device(
             descriptor.device_index.unwrap_or(0),
@@ -263,7 +263,7 @@ impl MetalBackend {
                 by_segment,
                 precompute_refs,
             };
-            let benchmark_job = benchmark_job_for_shape(job);
+            let benchmark_job = benchmark_job_for_tuning(job);
             let raw_job = metal_sys::MetalJob {
                 seed_bytes: &benchmark_job.seed_bytes,
                 pass_prefix: &benchmark_job.pass_prefix,

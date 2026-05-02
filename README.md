@@ -58,7 +58,7 @@ macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-x86_
 5. 返回上一级菜单
 6. 退出脚本
 
-默认走自动调优模式，不要求用户手动选择 CPU / GPU，也不暴露手动选择挖矿后端的入口。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底；普通自动调优会同时启动 CPU 调优和 GPU 调优。GPU 调优会读取显卡显存、单次最大分配、计算单元、线程组限制、本地/共享内存、子组/warp 大小，以及 OpenCL/Metal 暴露的统一内存、低功耗和外接属性，先生成适配当前任务内存成本和显卡形态的候选 batch / segment / precompute 策略，再实测选择最快配置。运行时会选择最快 CPU，并把去重后的多张 GPU 一起参与挖矿，避免同一张卡同时被 CUDA/OpenCL 或 Metal/OpenCL 重复占用。
+默认走自动调优模式，不要求用户手动选择 CPU / GPU，也不暴露手动选择挖矿后端的入口。CLI 调用 `run_auto_tuned_with_config_and_cancel`，会保留 CPU 兜底；普通自动调优会同时启动 CPU 调优和 GPU 调优。自动调优先通过矿池 HTTP challenge 得到本轮实际 `seed`、`round_id`、`visitor_id`、`challenge_id`、`session_salt`、`time_cost`、`memory_cost_mb`、`parallelism` 和 `difficulty_bits`，再用这些参数派生出的真实 `pass_prefix` 跑 CPU / CUDA / OpenCL / Metal 测速；测速阶段只把 difficulty 临时抬高到不可命中值，避免 benchmark 提前停止影响算力判断，真实挖矿和提交仍使用 HTTP 返回的原始 difficulty。GPU 调优会读取显卡显存、单次最大分配、计算单元、线程组限制、本地/共享内存、子组/warp 大小，以及 OpenCL/Metal 暴露的统一内存、低功耗和外接属性，先生成适配当前 HTTP 任务参数和显卡形态的候选 batch / segment / precompute 策略，再实测选择最快配置。调优缓存按本轮 HTTP challenge 参数区分，不会把旧 challenge 的测速结果套用到新 challenge。运行时会选择最快 CPU，并把去重后的多张 GPU 一起参与挖矿，避免同一张卡同时被 CUDA/OpenCL 或 Metal/OpenCL 重复占用。
 
 当前 Rust 接入的计算后端：
 
@@ -611,6 +611,8 @@ cargo run --release --bin benchcmp
 cargo run --release --bin benchcuda
 ```
 
+这两个 benchmark 辅助工具用于本机粗测 CPU / GPU 后端能力，使用固定本地基准参数；正式挖矿流程的自动调优会在拿到 HTTP challenge 后，用该 challenge 的实际参数重新测速和选择后端。
+
 当前测试主要覆盖：
 
 - 账号缓存旧格式兼容、归一化和保存目录创建。
@@ -622,7 +624,7 @@ cargo run --release --bin benchcuda
 - 刮刮乐、签到、羊了个羊、谜题2048、记忆翻牌、华容道、数独 DTO 兼容解析。
 - 全自动白嫖玩法的账号间并发、账号内多玩法并发和保存行为。
 - 羊了个羊点击队列、认证重试、HTTP 重试上限、槽位满处理、剩余次数和快照更新。
-- 挖矿后端选择、奖励类型解析和基础行为。
+- 挖矿后端选择、HTTP challenge 参数驱动的自动调优、奖励类型解析和基础行为。
 - 谜题2048移动合并规则、合法移动、直接胜利步和 3x3 / 4x4 / 5x5 求解器入口。
 - 记忆翻牌已知对子、失败组合规避和残局识别。
 - 华容道可解性校验、方向语义和 3x3 / 4x4 / 5x5 路径搜索。
