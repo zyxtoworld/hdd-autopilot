@@ -376,10 +376,7 @@ hdd-autopilot/
 ├─ native/
 │  ├─ mining-cuda/             # Rust CUDA sys crate 使用的 CUDA 计算核心
 │  ├─ mining-opencl/           # Rust OpenCL sys crate 使用的 OpenCL 计算核心
-│  ├─ mining-metal/            # Rust Metal sys crate 使用的 Metal 计算核心
-│  ├─ mining-cuda-common/      # 独立 CUDA 工具共享代码
-│  ├─ mining-invite-cuda/      # 独立原生邀请码 CUDA 工具
-│  └─ mining-balance-cuda/     # 独立原生余额码 CUDA 工具
+│  └─ mining-metal/            # Rust Metal sys crate 使用的 Metal 计算核心
 ├─ scripts/                    # 构建、release、smoke 脚本
 ├─ var/                        # 运行时数据与日志，git 忽略
 ├─ dist/                       # 打包产物、构建日志、状态文件，git 忽略
