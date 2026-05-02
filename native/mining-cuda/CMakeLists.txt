@@ -3,18 +3,23 @@ cmake_minimum_required(VERSION 3.24)
 project(mining-cuda LANGUAGES C CXX CUDA)
 
 find_package(CUDAToolkit REQUIRED)
+find_package(Threads REQUIRED)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CUDA_RUNTIME_LIBRARY Static)
 
 if(NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures to build for")
+    if(APPLE)
+        set(CMAKE_CUDA_ARCHITECTURES 30 35 50 52 60 61 70 75 CACHE STRING "CUDA architectures to build for")
+    else()
+        set(CMAKE_CUDA_ARCHITECTURES 50 52 60 61 70 75 80 86 89 90 CACHE STRING "CUDA architectures to build for")
+    endif()
 endif()
 
 set(DIST_DIR "${CMAKE_SOURCE_DIR}/../../artifacts")
@@ -36,7 +41,10 @@ if(MSVC)
     )
 endif()
 
-add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN HAVE_CUDA=1)
+add_compile_definitions(HAVE_CUDA=1)
+if(WIN32)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 add_library(argon2_ref STATIC
     third_party/argon2/src/argon2.c
@@ -53,6 +61,7 @@ target_include_directories(argon2_ref
 if(MSVC)
     target_compile_options(argon2_ref PRIVATE /arch:AVX2)
 endif()
+target_link_libraries(argon2_ref PUBLIC Threads::Threads)
 
 add_library(argon2_gpu_common STATIC
     third_party/argon2-gpu/src/argon2-gpu-common/argon2params.cpp
@@ -94,14 +103,14 @@ add_library(mining_cuda_core STATIC
     src/ffi.cpp
 )
 target_include_directories(mining_cuda_core PUBLIC include third_party/json third_party/argon2/include third_party/argon2-gpu/include ${CUDAToolkit_INCLUDE_DIRS})
-target_link_libraries(mining_cuda_core PUBLIC argon2_ref argon2_cuda winhttp)
+target_link_libraries(mining_cuda_core PUBLIC argon2_ref argon2_cuda)
 set_target_properties(mining_cuda_core PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     CUDA_RESOLVE_DEVICE_SYMBOLS ON
     CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
 )
 
-if(NOT MINING_CUDA_LIBRARY_ONLY)
+if(WIN32 AND NOT MINING_CUDA_LIBRARY_ONLY)
     add_executable(mining-cuda
         src/main.cpp
         src/config.cpp
@@ -118,7 +127,11 @@ if(NOT MINING_CUDA_LIBRARY_ONLY)
     target_link_libraries(mining-cuda PRIVATE argon2_ref argon2_cuda winhttp)
     set_target_properties(mining-cuda PROPERTIES
         OUTPUT_NAME "mining-cuda-win-x64"
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
         CUDA_SEPARABLE_COMPILATION ON
+        CUDA_STANDARD 14
+        CUDA_STANDARD_REQUIRED ON
         CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
     )
 endif()

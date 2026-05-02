@@ -110,7 +110,7 @@ impl CudaBackend {
     }
 
     pub fn list_devices(&self) -> Result<Vec<BackendDescriptor>, MiningError> {
-        if std::env::consts::OS != "windows" || std::env::consts::ARCH != "x86_64" {
+        if !cuda_sys::is_supported_target() {
             return Ok(Vec::new());
         }
         let devices = cuda_sys::list_devices().map_err(MiningError::Message)?;
@@ -121,10 +121,10 @@ impl CudaBackend {
     }
 
     pub fn detect_availability(&self) -> GPUAvailability {
-        if std::env::consts::OS != "windows" || std::env::consts::ARCH != "x86_64" {
+        if !cuda_sys::is_supported_target() {
             return GPUAvailability {
                 available: false,
-                reason: "当前环境不是 Windows x64，无法使用 CUDA 后端。".to_string(),
+                reason: "Current platform does not support the CUDA backend.".to_string(),
             };
         }
         match cuda_sys::is_available() {
@@ -244,60 +244,42 @@ impl CudaBackend {
             precompute_refs,
             duration,
         } = config;
-        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-        {
-            let _ = (
-                device_index,
-                job,
-                batch_size,
-                by_segment,
-                precompute_refs,
-                duration,
-                cancel,
-            );
-            Err(MiningError::Message(
-                "当前平台未启用 CUDA 后端。".to_string(),
-            ))
-        }
-        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-        {
-            cuda_sys::validate().map_err(MiningError::Message)?;
-            let config = CudaSolverConfig {
-                batch_size: batch_size.max(1),
-                by_segment,
-                precompute_refs,
-            };
-            let benchmark_job = benchmark_job_for_shape(job);
-            let raw_job = cuda_sys::CudaJob {
-                seed_bytes: &benchmark_job.seed_bytes,
-                pass_prefix: &benchmark_job.pass_prefix,
-                time_cost: benchmark_job.time_cost,
-                memory_cost_kib: benchmark_job.memory_cost_kib,
-                parallelism: benchmark_job.parallelism,
-                difficulty_bits: benchmark_job.difficulty_bits,
-            };
-            let mut session = cuda_sys::create_session(device_index, &raw_job, config, 1)
-                .map_err(MiningError::Message)?;
-            let started = std::time::Instant::now();
-            let mut attempts = 0i64;
-            while started.elapsed() < duration {
-                if cancel.load(Ordering::SeqCst) {
-                    return Err(interrupted_error());
-                }
-                let result = session.mine_next_batch().map_err(MiningError::Message)?;
-                attempts = result.attempts;
+        cuda_sys::validate().map_err(MiningError::Message)?;
+        let config = CudaSolverConfig {
+            batch_size: batch_size.max(1),
+            by_segment,
+            precompute_refs,
+        };
+        let benchmark_job = benchmark_job_for_shape(job);
+        let raw_job = cuda_sys::CudaJob {
+            seed_bytes: &benchmark_job.seed_bytes,
+            pass_prefix: &benchmark_job.pass_prefix,
+            time_cost: benchmark_job.time_cost,
+            memory_cost_kib: benchmark_job.memory_cost_kib,
+            parallelism: benchmark_job.parallelism,
+            difficulty_bits: benchmark_job.difficulty_bits,
+        };
+        let mut session = cuda_sys::create_session(device_index, &raw_job, config, 1)
+            .map_err(MiningError::Message)?;
+        let started = std::time::Instant::now();
+        let mut attempts = 0i64;
+        while started.elapsed() < duration {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(interrupted_error());
             }
-            let elapsed = started.elapsed();
-            Ok(BenchmarkResult {
-                workers: config.batch_size,
-                concurrency: config.batch_size,
-                by_segment: config.by_segment,
-                precompute_refs: config.precompute_refs,
-                attempts,
-                elapsed,
-                attempts_per_s: attempts as f64 / elapsed.as_secs_f64().max(0.001),
-            })
+            let result = session.mine_next_batch().map_err(MiningError::Message)?;
+            attempts = result.attempts;
         }
+        let elapsed = started.elapsed();
+        Ok(BenchmarkResult {
+            workers: config.batch_size,
+            concurrency: config.batch_size,
+            by_segment: config.by_segment,
+            precompute_refs: config.precompute_refs,
+            attempts,
+            elapsed,
+            attempts_per_s: attempts as f64 / elapsed.as_secs_f64().max(0.001),
+        })
     }
 
     pub fn start_mining_session(

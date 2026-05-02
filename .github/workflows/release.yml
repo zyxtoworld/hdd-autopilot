@@ -93,6 +93,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: "12.5.0"
       - name: Install OpenCL build dependencies
         run: sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev opencl-headers
       - name: Build package

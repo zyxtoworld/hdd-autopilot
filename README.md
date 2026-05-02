@@ -63,7 +63,7 @@ macOS / Linux 包是自解压 shell wrapper，可用 `sh dist/hdd-autopilot-x86_
 当前 Rust 接入的计算后端：
 
 - CPU：纯 Rust portable fallback，所有平台可用。
-- CUDA：Windows x86_64 原生后端；缺少 CUDA / nvcc / MSVC 等环境时降级为不可用后端。
+- CUDA：Windows x86_64、Linux x86_64 原生后端；Linux aarch64 和旧 Intel macOS 可在本机或 self-hosted 环境检测到 CUDA Toolkit / `nvcc` 时启用。缺少 CUDA 环境时降级为不可用后端。
 - OpenCL：Windows / macOS / Linux 原生后端；枚举 OpenCL 暴露的 GPU / Accelerator 设备，覆盖 Apple GPU、AMD / NVIDIA / Intel OpenCL 设备，以及 macOS 可被系统驱动暴露的外接 GPU。
 - Metal：macOS 原生后端；仅 macOS target + macOS host 构建时启用。
 
@@ -370,7 +370,7 @@ hdd-autopilot/
 │  │        ├─ mod.rs          # 挖矿主循环、心跳、提交、会话重建
 │  │        ├─ gpu.rs          # GPU 候选筛选、调优与 failover
 │  │        └─ support.rs      # 输出文件、奖励保存、共享辅助类型
-│  ├─ mining-cuda-sys/         # Windows x86_64 CUDA FFI；失败时降级
+│  ├─ mining-cuda-sys/         # Windows / Linux CUDA FFI；旧 Intel macOS 可选 legacy CUDA；失败时降级
 │  ├─ mining-opencl-sys/       # Windows / macOS / Linux OpenCL FFI；失败时降级
 │  └─ mining-metal-sys/        # macOS Metal FFI；失败时降级
 ├─ native/
@@ -532,7 +532,7 @@ release 脚本会在全部目标都处理完后统一输出汇总。
 - `hdd-autopilot-x86_64-unknown-linux-gnu`
 - `hdd-autopilot-aarch64-unknown-linux-gnu`
 
-tag 触发时会把上述正式包上传到 GitHub Release；手动触发时只生成 Actions artifacts，方便先验证。GitHub Actions 会校验每个平台的 `.status` 必须是 `built`，如果可选 GPU 原生后端缺环境导致 `built_degraded`，该平台自动打包会直接失败，避免发布降级包；本地脚本仍保留原来的降级容错逻辑。
+tag 触发时会把上述正式包上传到 GitHub Release；手动触发时只生成 Actions artifacts，方便先验证。GitHub Actions 会校验每个平台的 `.status` 必须是 `built`，如果可选 GPU 原生后端缺环境导致 `built_degraded`，该平台自动打包会直接失败，避免发布降级包；Linux x86_64 job 会安装 CUDA Toolkit 和 OpenCL headers 后构建。旧 Intel macOS CUDA 和 Linux aarch64 CUDA 属于 self-hosted/本机增强包，本地脚本仍保留原来的降级容错逻辑。
 
 ### 本地上传 GitHub Release
 
@@ -565,8 +565,9 @@ bash scripts/upload-release.sh v0.1.0 --repo owner/hdd-autopilot --dist ./dist
 ### 原生 GPU 后端环境
 
 - Windows CUDA / OpenCL：CUDA 需要 Windows x86_64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；OpenCL 需要 OpenCL headers 和 `OpenCL.lib`，可来自 CUDA Toolkit、`OPENCL_ROOT` 或 vcpkg。缺失时禁用对应后端，不影响本地 CPU 包。
+- Linux CUDA / OpenCL：Linux x86_64 会在检测到 CUDA Toolkit / `nvcc` 时编入 CUDA 后端，GitHub x86_64 release job 会安装 CUDA Toolkit 后打完整包；Linux aarch64 支持本机或 self-hosted CUDA Toolkit，但默认不强制 GitHub hosted arm64 包带 CUDA。OpenCL 需要本机 C/C++ 工具链、OpenCL headers 和 ICD loader；运行机器还需要 NVIDIA / AMD / Intel 等厂商驱动或 OpenCL runtime 才能实际枚举显卡。
+- 旧 Intel macOS CUDA：仅面向 `x86_64-apple-darwin` self-hosted/本机旧系统环境；检测到 CUDA Toolkit / `nvcc` 时编入 legacy CUDA 后端。现代 GitHub macOS runner 不提供旧 CUDA 环境，默认包仍走 Metal / OpenCL / CPU。
 - macOS OpenCL / Metal：需要 macOS host/target 和 Apple SDK；Metal 覆盖系统可用 GPU，OpenCL 会枚举系统暴露的 GPU / Accelerator，包括 Apple GPU、AMD eGPU，以及安装了可用 OpenCL 驱动后被系统暴露的其他厂商设备；缺失时禁用对应后端，不影响本地基础包。
-- Linux OpenCL：需要 Linux x86_64 或 aarch64 host/target、本机 C/C++ 工具链、OpenCL headers 和 ICD loader；运行机器还需要 NVIDIA / AMD / Intel 等厂商驱动或 OpenCL runtime 才能实际枚举显卡。
 - macOS cross/non-macOS 构建路径可使用 `cargo-zigbuild` 与 `zig`；脚本会根据环境探测可行路径，但 OpenCL / Metal 原生后端只在 macOS host/target 启用。
 - Linux x86_64：本机 Linux x86_64 构建会尝试编入 OpenCL 后端；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux x86_64 host 本机 C 编译器。
 - Linux aarch64：本机 Linux aarch64 构建会尝试编入 OpenCL 后端；脚本优先使用 `cargo-zigbuild` + `zig` 构建 glibc 2.17 兼容包，没有 zig 时才退回 Linux aarch64 host 本机 C 编译器。

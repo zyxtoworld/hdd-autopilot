@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "argon2-cuda/device.h"
@@ -275,8 +276,12 @@ BenchmarkResult Solver::run_benchmark_case(const Job& job,
 
 void Solver::validate_against_reference(const Job& job, std::uint64_t nonce) const {
     const auto reference_digest = compute_reference_digest(job, nonce);
+    SolverConfig config;
+    config.batch_size = 1;
+    config.by_segment = false;
+    config.precompute_refs = false;
     const auto gpu_digest = compute_gpu_digest(job,
-                                               SolverConfig{.batch_size = 1, .by_segment = false, .precompute_refs = false},
+                                               config,
                                                device_index_,
                                                nonce);
     if (reference_digest != gpu_digest) {
@@ -287,17 +292,17 @@ void Solver::validate_against_reference(const Job& job, std::uint64_t nonce) con
 }
 
 BenchmarkResult Solver::find_best_benchmark_config() const {
-    Job benchmark_job(JobConfig{
-        .seed = "benchmark-seed-fixed",
-        .round_id = 1,
-        .visitor_id = "benchmark-visitor-fixed",
-        .challenge_id = 1,
-        .session_salt = "benchmark-session-salt-fixed",
-        .time_cost = 1,
-        .memory_cost_mb = 64,
-        .parallelism = 1,
-        .difficulty_bits = 255,
-    });
+    JobConfig benchmark_config;
+    benchmark_config.seed = "benchmark-seed-fixed";
+    benchmark_config.round_id = 1;
+    benchmark_config.visitor_id = "benchmark-visitor-fixed";
+    benchmark_config.challenge_id = 1;
+    benchmark_config.session_salt = "benchmark-session-salt-fixed";
+    benchmark_config.time_cost = 1;
+    benchmark_config.memory_cost_mb = 64;
+    benchmark_config.parallelism = 1;
+    benchmark_config.difficulty_bits = 255;
+    Job benchmark_job(std::move(benchmark_config));
 
     const auto max_batch_size = estimate_max_batch_size(benchmark_job);
     const auto candidates = build_benchmark_candidates(max_batch_size);
@@ -358,12 +363,30 @@ std::vector<SolverConfig> Solver::build_benchmark_candidates(std::size_t max_bat
         if (batch_size > max_batch_size) {
             continue;
         }
-        candidates.push_back(SolverConfig{.batch_size = batch_size, .by_segment = false, .precompute_refs = false});
-        candidates.push_back(SolverConfig{.batch_size = batch_size, .by_segment = true, .precompute_refs = false});
-        candidates.push_back(SolverConfig{.batch_size = batch_size, .by_segment = true, .precompute_refs = true});
+        SolverConfig default_config;
+        default_config.batch_size = batch_size;
+        default_config.by_segment = false;
+        default_config.precompute_refs = false;
+        candidates.push_back(default_config);
+
+        SolverConfig segmented_config;
+        segmented_config.batch_size = batch_size;
+        segmented_config.by_segment = true;
+        segmented_config.precompute_refs = false;
+        candidates.push_back(segmented_config);
+
+        SolverConfig precomputed_config;
+        precomputed_config.batch_size = batch_size;
+        precomputed_config.by_segment = true;
+        precomputed_config.precompute_refs = true;
+        candidates.push_back(precomputed_config);
     }
     if (candidates.empty()) {
-        candidates.push_back(SolverConfig{.batch_size = 1, .by_segment = false, .precompute_refs = false});
+        SolverConfig fallback_config;
+        fallback_config.batch_size = 1;
+        fallback_config.by_segment = false;
+        fallback_config.precompute_refs = false;
+        candidates.push_back(fallback_config);
     }
     return candidates;
 }

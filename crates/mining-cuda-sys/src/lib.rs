@@ -1,20 +1,9 @@
 #![allow(non_camel_case_types)]
-#![cfg_attr(
-    not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )),
-    allow(dead_code)
-)]
+#![cfg_attr(not(mining_cuda_native_enabled), allow(dead_code))]
 
 use std::time::Duration;
 
-#[cfg(all(
-    target_os = "windows",
-    target_arch = "x86_64",
-    mining_cuda_native_enabled
-))]
+#[cfg(mining_cuda_native_enabled)]
 use std::ffi::CStr;
 
 #[repr(C)]
@@ -171,24 +160,20 @@ unsafe extern "C" {
     ) -> bool;
 }
 
+pub fn is_supported_target() -> bool {
+    cfg!(mining_cuda_supported_target)
+}
+
 pub fn is_available() -> Result<bool, String> {
-    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    #[cfg(not(mining_cuda_supported_target))]
     {
         Ok(false)
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        not(mining_cuda_native_enabled)
-    ))]
+    #[cfg(all(mining_cuda_supported_target, not(mining_cuda_native_enabled)))]
     {
-        Err("当前构建未启用 CUDA 原生后端。".to_string())
+        Err("CUDA native backend is not enabled in this build.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         if mining_cuda_is_available() {
             Ok(true)
@@ -199,19 +184,11 @@ pub fn is_available() -> Result<bool, String> {
 }
 
 pub fn validate() -> Result<(), String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
-        Err("当前平台未启用 CUDA 后端".to_string())
+        Err("CUDA backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         if mining_cuda_validate() {
             Ok(())
@@ -222,19 +199,11 @@ pub fn validate() -> Result<(), String> {
 }
 
 pub fn list_devices() -> Result<Vec<CudaDeviceInfo>, String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         Ok(Vec::new())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         let count = mining_cuda_device_count();
         let mut devices = Vec::with_capacity(count);
@@ -273,20 +242,12 @@ pub fn default_solver_config(
     device_index: usize,
     job: &CudaJob<'_>,
 ) -> Result<CudaSolverConfig, String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         let _ = (device_index, job);
-        Err("当前平台未启用 CUDA 后端".to_string())
+        Err("CUDA backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         let raw_job = mining_cuda_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -315,20 +276,12 @@ pub fn default_solver_config(
 }
 
 pub fn find_best_benchmark_config(device_index: usize) -> Result<CudaBenchmarkResult, String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         let _ = device_index;
-        Err("当前平台未启用 CUDA 后端".to_string())
+        Err("CUDA backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         let mut raw = mining_cuda_benchmark_result {
             batch_size: 0,
@@ -360,20 +313,12 @@ pub fn mine_batch(
     config: CudaSolverConfig,
     start_nonce: u64,
 ) -> Result<CudaMineResult, String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         let _ = (device_index, job, config, start_nonce);
-        Err("当前平台未启用 CUDA 后端".to_string())
+        Err("CUDA backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         let raw_job = mining_cuda_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -426,20 +371,12 @@ pub fn create_session(
     config: CudaSolverConfig,
     start_nonce: u64,
 ) -> Result<CudaMiningSession, String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         let _ = (device_index, job, config, start_nonce);
-        Err("当前平台未启用 CUDA 后端".to_string())
+        Err("CUDA backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         let raw_job = mining_cuda_job {
             seed_ptr: job.seed_bytes.as_ptr(),
@@ -467,19 +404,11 @@ pub fn create_session(
 
 impl CudaMiningSession {
     pub fn mine_next_batch(&mut self) -> Result<CudaMineResult, String> {
-        #[cfg(not(all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            mining_cuda_native_enabled
-        )))]
+        #[cfg(not(mining_cuda_native_enabled))]
         {
-            Err("当前平台未启用 CUDA 后端".to_string())
+            Err("CUDA backend is not enabled on this platform.".to_string())
         }
-        #[cfg(all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            mining_cuda_native_enabled
-        ))]
+        #[cfg(mining_cuda_native_enabled)]
         unsafe {
             let mut raw_result = mining_cuda_mine_result {
                 found: false,
@@ -509,11 +438,7 @@ impl CudaMiningSession {
 
 impl Drop for CudaMiningSession {
     fn drop(&mut self) {
-        #[cfg(all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            mining_cuda_native_enabled
-        ))]
+        #[cfg(mining_cuda_native_enabled)]
         unsafe {
             if !self.raw.is_null() {
                 mining_cuda_session_destroy(self.raw);
@@ -531,11 +456,7 @@ pub fn argon2id_hash_raw(
     parallelism: u32,
     digest: &mut [u8],
 ) -> Result<(), String> {
-    #[cfg(not(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    )))]
+    #[cfg(not(mining_cuda_native_enabled))]
     {
         let _ = (
             password,
@@ -545,13 +466,9 @@ pub fn argon2id_hash_raw(
             parallelism,
             digest,
         );
-        Err("当前平台未启用原生 Argon2 后端".to_string())
+        Err("Native Argon2 backend is not enabled on this platform.".to_string())
     }
-    #[cfg(all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        mining_cuda_native_enabled
-    ))]
+    #[cfg(mining_cuda_native_enabled)]
     unsafe {
         if mining_argon2id_hash_raw(
             password.as_ptr(),
@@ -571,11 +488,7 @@ pub fn argon2id_hash_raw(
     }
 }
 
-#[cfg(all(
-    target_os = "windows",
-    target_arch = "x86_64",
-    mining_cuda_native_enabled
-))]
+#[cfg(mining_cuda_native_enabled)]
 fn decode_c_string(bytes: &[u8]) -> String {
     let len = bytes
         .iter()
@@ -584,22 +497,18 @@ fn decode_c_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..len]).trim().to_string()
 }
 
-#[cfg(all(
-    target_os = "windows",
-    target_arch = "x86_64",
-    mining_cuda_native_enabled
-))]
+#[cfg(mining_cuda_native_enabled)]
 unsafe fn last_error_message() -> String {
     let ptr = unsafe { mining_cuda_last_error_message() };
     if ptr.is_null() {
-        return "CUDA 后端返回了未知错误".to_string();
+        return "CUDA backend returned an unknown error.".to_string();
     }
     let text = unsafe { CStr::from_ptr(ptr) }
         .to_string_lossy()
         .trim()
         .to_string();
     if text.is_empty() {
-        "CUDA 后端返回了未知错误".to_string()
+        "CUDA backend returned an unknown error.".to_string()
     } else {
         text
     }

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <exception>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -27,17 +28,17 @@ void clear_last_error() {
 }
 
 app::Job benchmark_job() {
-    return app::Job(app::JobConfig{
-        .seed = "benchmark-seed-fixed",
-        .round_id = 1,
-        .visitor_id = "benchmark-visitor-fixed",
-        .challenge_id = 1,
-        .session_salt = "benchmark-session-salt-fixed",
-        .time_cost = 1,
-        .memory_cost_mb = 64,
-        .parallelism = 1,
-        .difficulty_bits = 255,
-    });
+    app::JobConfig config;
+    config.seed = "benchmark-seed-fixed";
+    config.round_id = 1;
+    config.visitor_id = "benchmark-visitor-fixed";
+    config.challenge_id = 1;
+    config.session_salt = "benchmark-session-salt-fixed";
+    config.time_cost = 1;
+    config.memory_cost_mb = 64;
+    config.parallelism = 1;
+    config.difficulty_bits = 255;
+    return app::Job(std::move(config));
 }
 
 app::Job make_job(const mining_cuda_job& raw) {
@@ -47,22 +48,22 @@ app::Job make_job(const mining_cuda_job& raw) {
     const auto pass_prefix = std::string(
         reinterpret_cast<const char*>(raw.pass_prefix_ptr),
         reinterpret_cast<const char*>(raw.pass_prefix_ptr) + raw.pass_prefix_len);
-    return app::Job(app::JobConfig{
-        .seed = seed,
-        .pass_prefix_override = pass_prefix,
-        .time_cost = static_cast<int>(raw.time_cost),
-        .memory_cost_mb = static_cast<int>(raw.memory_cost_kib / 1024),
-        .parallelism = static_cast<int>(raw.parallelism),
-        .difficulty_bits = raw.difficulty_bits,
-    });
+    app::JobConfig config;
+    config.seed = seed;
+    config.pass_prefix_override = pass_prefix;
+    config.time_cost = static_cast<int>(raw.time_cost);
+    config.memory_cost_mb = static_cast<int>(raw.memory_cost_kib / 1024);
+    config.parallelism = static_cast<int>(raw.parallelism);
+    config.difficulty_bits = raw.difficulty_bits;
+    return app::Job(std::move(config));
 }
 
 app::SolverConfig make_solver_config(const mining_cuda_solver_config& raw) {
-    return app::SolverConfig{
-        .batch_size = raw.batch_size,
-        .by_segment = raw.by_segment,
-        .precompute_refs = raw.precompute_refs,
-    };
+    app::SolverConfig config;
+    config.batch_size = raw.batch_size;
+    config.by_segment = raw.by_segment;
+    config.precompute_refs = raw.precompute_refs;
+    return config;
 }
 
 void fill_mine_result(const app::SolveResult& mined,

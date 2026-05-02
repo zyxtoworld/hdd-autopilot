@@ -1,58 +1,68 @@
-use std::path::PathBuf;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug, Clone)]
+struct Target {
+    os: String,
+    arch: String,
+}
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(mining_cuda_native_enabled)");
+    println!("cargo:rustc-check-cfg=cfg(mining_cuda_supported_target)");
     println!("cargo:rerun-if-env-changed=HOST");
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-env-changed=CUDA_ROOT");
+    println!("cargo:rerun-if-env-changed=CUDAToolkit_ROOT");
+    println!("cargo:rerun-if-env-changed=CUDACXX");
+    println!("cargo:rerun-if-env-changed=CMAKE_CUDA_ARCHITECTURES");
+    println!("cargo:rerun-if-env-changed=CUDAARCHS");
+    println!("cargo:rerun-if-env-changed=HDD_AUTOPILOT_REQUIRE_CUDA");
     println!("cargo:rerun-if-changed=../../native/mining-cuda/CMakeLists.txt");
     println!("cargo:rerun-if-changed=../../native/mining-cuda/include");
     println!("cargo:rerun-if-changed=../../native/mining-cuda/src");
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    if target_os != "windows" || target_arch != "x86_64" {
-        return;
-    }
-
-    if !host_is_windows() {
-        warn_native_disabled("当前不是 Windows 宿主，跳过 CUDA 原生后端构建。");
-        return;
-    }
-
-    let Some(cuda_lib_dir) = find_cuda_lib_dir() else {
-        warn_native_disabled("未检测到 CUDA 库目录，跳过 CUDA 原生后端构建。");
+    let target = Target {
+        os: env::var("CARGO_CFG_TARGET_OS").unwrap_or_default(),
+        arch: env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default(),
+    };
+    let Some(support) = cuda_support(&target) else {
         return;
     };
-    let Some(nvcc_path) = find_nvcc() else {
-        warn_native_disabled("未检测到 nvcc，跳过 CUDA 原生后端构建。");
+    println!("cargo:rustc-cfg=mining_cuda_supported_target");
+
+    let require_cuda = support.required_by_default || env_flag("HDD_AUTOPILOT_REQUIRE_CUDA");
+    if !host_matches_target(&target) {
+        warn_native_disabled(&format!(
+            "host cannot build CUDA for target {}-{}",
+            target.arch, target.os
+        ));
+        return;
+    }
+
+    let Some(nvcc_path) = find_nvcc(&target) else {
+        if require_cuda {
+            warn_native_disabled("nvcc was not found; skipping CUDA native backend");
+        }
+        return;
+    };
+    let Some(cuda_lib_dir) = find_cuda_lib_dir(&target, &nvcc_path) else {
+        if require_cuda {
+            warn_native_disabled(
+                "CUDA library directory was not found; skipping CUDA native backend",
+            );
+        }
         return;
     };
 
-    if let Some(vs_env) = load_vs_dev_env() {
-        for (key, value) in vs_env {
-            unsafe {
-                std::env::set_var(key, value);
-            }
-        }
-    }
-    if let Some(cmake_path) = find_visual_studio_cmake() {
-        unsafe {
-            std::env::set_var("CMAKE", cmake_path);
-        }
-    }
-    let ninja_path = find_visual_studio_ninja();
-    if let Some(path) = ninja_path.as_ref() {
-        unsafe {
-            std::env::set_var("CMAKE_GENERATOR", "Ninja");
-        }
-        unsafe {
-            std::env::set_var("CMAKE_MAKE_PROGRAM", path);
-        }
-    }
+    prepare_platform_build_environment(&target);
 
-    let Some(dst) = build_native(ninja_path, nvcc_path) else {
-        warn_native_disabled("CUDA 原生后端构建失败，已自动降级为不可用后端。");
+    let Some(dst) = build_native(&target, nvcc_path) else {
+        warn_native_disabled(
+            "CUDA native backend build failed; falling back to unavailable backend",
+        );
         return;
     };
 
@@ -66,10 +76,33 @@ fn main() {
     println!("cargo:rustc-link-lib=static=argon2_gpu_common");
     println!("cargo:rustc-link-lib=static=cudadevrt");
     println!("cargo:rustc-link-lib=static=cudart_static");
-    println!("cargo:rustc-link-lib=winhttp");
+    link_platform_libraries(&target);
 }
 
-fn build_native(ninja_path: Option<PathBuf>, nvcc_path: PathBuf) -> Option<PathBuf> {
+#[derive(Debug, Clone, Copy)]
+struct CudaSupport {
+    required_by_default: bool,
+}
+
+fn cuda_support(target: &Target) -> Option<CudaSupport> {
+    match (target.os.as_str(), target.arch.as_str()) {
+        ("windows", "x86_64") => Some(CudaSupport {
+            required_by_default: true,
+        }),
+        ("linux", "x86_64") => Some(CudaSupport {
+            required_by_default: true,
+        }),
+        ("linux", "aarch64") => Some(CudaSupport {
+            required_by_default: false,
+        }),
+        ("macos", "x86_64") => Some(CudaSupport {
+            required_by_default: false,
+        }),
+        _ => None,
+    }
+}
+
+fn build_native(target: &Target, nvcc_path: PathBuf) -> Option<PathBuf> {
     run_with_suppressed_panic_output(|| {
         let mut config = cmake::Config::new("../../native/mining-cuda");
         config
@@ -77,8 +110,8 @@ fn build_native(ninja_path: Option<PathBuf>, nvcc_path: PathBuf) -> Option<PathB
             .define("MINING_CUDA_LIBRARY_ONLY", "ON")
             .define("CMAKE_CUDA_COMPILER", nvcc_path)
             .build_target("mining_cuda_core");
-        if let Some(path) = ninja_path {
-            config.define("CMAKE_MAKE_PROGRAM", path);
+        if target.os == "macos" {
+            config.define("CMAKE_OSX_ARCHITECTURES", "x86_64");
         }
         config.build()
     })
@@ -99,9 +132,177 @@ fn warn_native_disabled(reason: &str) {
     println!("cargo:warning=CUDA native backend disabled: {reason}");
 }
 
-fn host_is_windows() -> bool {
-    std::env::var("HOST")
-        .map(|host| host.contains("windows"))
+fn host_matches_target(target: &Target) -> bool {
+    let Ok(host) = env::var("HOST") else {
+        return false;
+    };
+    match (target.os.as_str(), target.arch.as_str()) {
+        ("windows", "x86_64") => host.contains("windows") && host.starts_with("x86_64-"),
+        ("linux", "x86_64") => host.contains("linux") && host.starts_with("x86_64-"),
+        ("linux", "aarch64") => host.contains("linux") && host.starts_with("aarch64-"),
+        ("macos", "x86_64") => host.contains("apple-darwin") && host.starts_with("x86_64-"),
+        _ => false,
+    }
+}
+
+fn prepare_platform_build_environment(target: &Target) {
+    if target.os != "windows" {
+        return;
+    }
+    if let Some(vs_env) = load_vs_dev_env() {
+        for (key, value) in vs_env {
+            set_env_var(key, value);
+        }
+    }
+    if let Some(cmake_path) = find_visual_studio_cmake() {
+        set_env_var("CMAKE", cmake_path);
+    }
+    if let Some(path) = find_visual_studio_ninja() {
+        set_env_var("CMAKE_GENERATOR", "Ninja");
+        set_env_var("CMAKE_MAKE_PROGRAM", path);
+    }
+}
+
+fn set_env_var<K, V>(key: K, value: V)
+where
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    unsafe {
+        env::set_var(key, value);
+    }
+}
+
+fn link_platform_libraries(target: &Target) {
+    match target.os.as_str() {
+        "windows" => {
+            println!("cargo:rustc-link-lib=winhttp");
+        }
+        "linux" => {
+            println!("cargo:rustc-link-lib=dylib=stdc++");
+            println!("cargo:rustc-link-lib=dylib=pthread");
+            println!("cargo:rustc-link-lib=dylib=dl");
+            println!("cargo:rustc-link-lib=dylib=rt");
+        }
+        "macos" => {
+            println!("cargo:rustc-link-lib=dylib=c++");
+        }
+        _ => {}
+    }
+}
+
+fn find_nvcc(target: &Target) -> Option<PathBuf> {
+    if let Some(path) = env::var_os("CUDACXX").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Some(path);
+    }
+    for root in cuda_roots(target) {
+        let candidate = root.join("bin").join(nvcc_name(target));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    find_program_in_path(nvcc_name(target))
+}
+
+fn find_cuda_lib_dir(target: &Target, nvcc_path: &Path) -> Option<PathBuf> {
+    let mut roots = cuda_roots(target);
+    if let Some(root) = nvcc_path.parent().and_then(Path::parent) {
+        roots.push(root.to_path_buf());
+    }
+    roots.into_iter().find_map(|root| {
+        cuda_lib_candidates(target, &root)
+            .into_iter()
+            .find(|path| path.is_dir())
+    })
+}
+
+fn nvcc_name(target: &Target) -> &'static str {
+    if target.os == "windows" {
+        "nvcc.exe"
+    } else {
+        "nvcc"
+    }
+}
+
+fn cuda_roots(target: &Target) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for var in ["CUDA_PATH", "CUDA_HOME", "CUDA_ROOT", "CUDAToolkit_ROOT"] {
+        if let Some(root) = env::var_os(var) {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    match target.os.as_str() {
+        "windows" => {
+            let default_root = PathBuf::from(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA");
+            if default_root.is_dir()
+                && let Ok(entries) = std::fs::read_dir(default_root)
+            {
+                roots.extend(
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| path.is_dir()),
+                );
+            }
+        }
+        "linux" | "macos" => {
+            roots.push(PathBuf::from("/usr/local/cuda"));
+            if let Ok(entries) = std::fs::read_dir("/usr/local") {
+                roots.extend(
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.is_dir()
+                                && path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .is_some_and(|name| name.starts_with("cuda-"))
+                        }),
+                );
+            }
+        }
+        _ => {}
+    }
+    roots
+}
+
+fn cuda_lib_candidates(target: &Target, root: &Path) -> Vec<PathBuf> {
+    match (target.os.as_str(), target.arch.as_str()) {
+        ("windows", _) => vec![root.join("lib").join("x64")],
+        ("linux", "x86_64") => vec![
+            root.join("targets").join("x86_64-linux").join("lib"),
+            root.join("lib64"),
+            root.join("lib"),
+        ],
+        ("linux", "aarch64") => vec![
+            root.join("targets").join("sbsa-linux").join("lib"),
+            root.join("targets").join("aarch64-linux").join("lib"),
+            root.join("lib64"),
+            root.join("lib"),
+        ],
+        ("macos", _) => vec![root.join("lib")],
+        _ => Vec::new(),
+    }
+}
+
+fn find_program_in_path(name: &str) -> Option<PathBuf> {
+    let path_var = env::var_os("PATH")?;
+    env::split_paths(&path_var)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.as_str(),
+                "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -166,7 +367,7 @@ fn find_vs_installation() -> Option<PathBuf> {
     if !vswhere.is_file() {
         return None;
     }
-    let output = std::process::Command::new(vswhere)
+    let output = Command::new(vswhere)
         .args([
             "-latest",
             "-products",
@@ -187,49 +388,5 @@ fn find_vs_installation() -> Option<PathBuf> {
         None
     } else {
         Some(PathBuf::from(trimmed))
-    }
-}
-
-fn find_nvcc() -> Option<PathBuf> {
-    if let Some(cuda_path) = std::env::var_os("CUDA_PATH") {
-        let path = PathBuf::from(&cuda_path).join("bin").join("nvcc.exe");
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let default_root = PathBuf::from(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA");
-    if default_root.is_dir() {
-        let mut entries = std::fs::read_dir(default_root)
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("bin").join("nvcc.exe"))
-            .filter(|path| path.is_file())
-            .collect::<Vec<_>>();
-        entries.sort();
-        entries.pop()
-    } else {
-        None
-    }
-}
-
-fn find_cuda_lib_dir() -> Option<PathBuf> {
-    if let Some(cuda_path) = std::env::var_os("CUDA_PATH") {
-        let path = PathBuf::from(cuda_path).join("lib").join("x64");
-        if path.is_dir() {
-            return Some(path);
-        }
-    }
-    let default_root = PathBuf::from(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA");
-    if default_root.is_dir() {
-        let mut entries = std::fs::read_dir(default_root)
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("lib").join("x64"))
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>();
-        entries.sort();
-        entries.pop()
-    } else {
-        None
     }
 }
