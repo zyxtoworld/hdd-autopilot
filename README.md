@@ -534,6 +534,34 @@ release 脚本会在全部目标都处理完后统一输出汇总。
 
 tag 触发时会把上述正式包上传到 GitHub Release；手动触发时只生成 Actions artifacts，方便先验证。GitHub Actions 会校验每个平台的 `.status` 必须是 `built`，如果可选 GPU 原生后端缺环境导致 `built_degraded`，该平台自动打包会直接失败，避免发布降级包；本地脚本仍保留原来的降级容错逻辑。
 
+### 本地上传 GitHub Release
+
+本地或 self-hosted 机器打完包后，可以用跨平台上传脚本把 `dist/` 里的正式包上传到 GitHub Release。脚本依赖 GitHub CLI：
+
+```bash
+gh auth login
+```
+
+Windows PowerShell：
+
+```powershell
+powershell -NoLogo -ExecutionPolicy Bypass -File scripts/upload-release.ps1 v0.1.0
+```
+
+macOS / Linux / Git Bash：
+
+```bash
+bash scripts/upload-release.sh v0.1.0
+```
+
+上传脚本会扫描 `dist/hdd-autopilot-*.status`，默认只上传状态为 `built` 的同名正式包，并会创建不存在的 Release；新 Release 默认生成 release notes，如果 Release 已存在，会覆盖同名 asset。指定仓库或 dist 目录：
+
+```bash
+bash scripts/upload-release.sh v0.1.0 --repo owner/hdd-autopilot --dist ./dist
+```
+
+旧 macOS CUDA 或其他 self-hosted 专用包也可以用同一套规则上传：产物名需要基于当前规范 target triple 命名并追加后缀，例如 `hdd-autopilot-x86_64-apple-darwin-cuda102-legacy`，同时有同名 `.status` 且内容为 `built`。旧短命名包不会被上传。`built_degraded` 默认不会上传；只有明确传 `--allow-degraded` 或 PowerShell 的 `-AllowDegraded` 时才允许。
+
 ### 原生 GPU 后端环境
 
 - Windows CUDA / OpenCL：CUDA 需要 Windows x86_64 host/target、CUDA Toolkit、`nvcc`、MSVC 工具链；OpenCL 需要 OpenCL headers 和 `OpenCL.lib`，可来自 CUDA Toolkit、`OPENCL_ROOT` 或 vcpkg。缺失时禁用对应后端，不影响本地 CPU 包。
