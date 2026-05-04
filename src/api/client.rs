@@ -2,21 +2,28 @@ use std::time::Duration;
 
 use crate::model::{
     AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
-    CheckinTodayResponse, ConfigResponse, HistoryResponse, LogicGameActionResponse,
-    LogicGameConfigResponse, LogicGameHistoryResponse, LogicGameKind, LogicGameMeResponse,
-    LogicGameStartRequest, LogicGameStartResponse, LogicGameStep, LoginRequest, LoginResponse,
+    CheckinTodayResponse, ConfigResponse, FlowfreeClickRequest, FlowfreeClickResponse,
+    FlowfreeConfigResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeStartRequest,
+    FlowfreeStartResponse, HistoryResponse, LightsoutClickRequest, LightsoutClickResponse,
+    LightsoutConfigResponse, LightsoutHistoryResponse, LightsoutMeResponse, LightsoutStartRequest,
+    LightsoutStartResponse, LoginRequest, LoginResponse, MazeConfigResponse, MazeHistoryResponse,
+    MazeMeResponse, MazeMoveRequest, MazeMoveResponse, MazeStartRequest, MazeStartResponse,
     MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
     MemoryMeResponse, MemoryStartRequest, MemoryStartResponse, MinesweeperClickRequest,
     MinesweeperClickResponse, MinesweeperConfigResponse, MinesweeperHistoryResponse,
-    MinesweeperMeResponse, MinesweeperStartRequest, MinesweeperStartResponse,
-    Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest,
-    Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
-    Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
-    Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
-    ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
-    ScratchRevealResponse, SessionCookie, StartRequest, StartResponse, StepRequest, StepResponse,
-    SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse,
-    SudokuMeResponse, SudokuStartRequest, SudokuStartResponse, TileMeResponse,
+    MinesweeperMeResponse, MinesweeperStartRequest, MinesweeperStartResponse, NonogramClickRequest,
+    NonogramClickResponse, NonogramConfigResponse, NonogramHistoryResponse, NonogramMeResponse,
+    NonogramStartRequest, NonogramStartResponse, Puzzle15ConfigResponse, Puzzle15HistoryResponse,
+    Puzzle15MeResponse, Puzzle15MoveRequest, Puzzle15MoveResponse, Puzzle15StartRequest,
+    Puzzle15StartResponse, Puzzle2048AbandonRequest, Puzzle2048ConfigResponse,
+    Puzzle2048HistoryResponse, Puzzle2048MeResponse, Puzzle2048MoveRequest, Puzzle2048MoveResponse,
+    Puzzle2048StartRequest, Puzzle2048StartResponse, ScratchHistoryResponse, ScratchPlayRequest,
+    ScratchPlayResponse, ScratchRevealRequest, ScratchRevealResponse, SessionCookie,
+    SokobanConfigResponse, SokobanHistoryResponse, SokobanMeResponse, SokobanMoveRequest,
+    SokobanMoveResponse, SokobanStartRequest, SokobanStartResponse, StartRequest, StartResponse,
+    StepRequest, StepResponse, SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse,
+    SudokuHistoryResponse, SudokuMeResponse, SudokuStartRequest, SudokuStartResponse,
+    TileMeResponse,
 };
 use crate::storage::{build_authorization, normalize_base_url};
 use reqwest::blocking::Client;
@@ -31,16 +38,21 @@ use super::cookies::{cookie_header_value, merge_session_cookies, normalize_sessi
 use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
-    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, LOGIN_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH,
-    MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH, MINESWEEPER_CLICK_PATH,
-    MINESWEEPER_CONFIG_PATH, MINESWEEPER_HISTORY_PATH, MINESWEEPER_ME_PATH, MINESWEEPER_START_PATH,
-    PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH,
-    PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
-    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH,
-    SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH,
-    SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH,
-    TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH,
-    UnauthorizedError,
+    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, FLOWFREE_CLICK_PATH, FLOWFREE_CONFIG_PATH,
+    FLOWFREE_HISTORY_PATH, FLOWFREE_ME_PATH, FLOWFREE_START_PATH, LIGHTSOUT_CLICK_PATH,
+    LIGHTSOUT_CONFIG_PATH, LIGHTSOUT_HISTORY_PATH, LIGHTSOUT_ME_PATH, LIGHTSOUT_START_PATH,
+    LOGIN_PATH, MAZE_CONFIG_PATH, MAZE_HISTORY_PATH, MAZE_ME_PATH, MAZE_MOVE_PATH, MAZE_START_PATH,
+    MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH, MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH,
+    MINESWEEPER_CLICK_PATH, MINESWEEPER_CONFIG_PATH, MINESWEEPER_HISTORY_PATH, MINESWEEPER_ME_PATH,
+    MINESWEEPER_START_PATH, NONOGRAM_CLICK_PATH, NONOGRAM_CONFIG_PATH, NONOGRAM_HISTORY_PATH,
+    NONOGRAM_ME_PATH, NONOGRAM_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH,
+    PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH,
+    PUZZLE_2048_CONFIG_PATH, PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH,
+    PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH,
+    SOKOBAN_CONFIG_PATH, SOKOBAN_HISTORY_PATH, SOKOBAN_ME_PATH, SOKOBAN_MOVE_PATH,
+    SOKOBAN_START_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH,
+    SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH,
+    TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
 };
 
 impl ApiClient {
@@ -540,53 +552,43 @@ impl ApiClient {
         )
     }
 
-    pub fn get_logic_game_config(
-        &self,
-        auth_token: &str,
-        kind: LogicGameKind,
-    ) -> Result<LogicGameConfigResponse, ApiError> {
+    pub fn get_sokoban_config(&self, auth_token: &str) -> Result<SokobanConfigResponse, ApiError> {
         self.get_json(
             Method::GET,
-            kind.config_path(),
+            SOKOBAN_CONFIG_PATH,
             auth_token,
-            &(self.base_url.clone() + kind.referer_path()),
+            &(self.base_url.clone() + "/sokoban"),
             Option::<&()>::None,
         )
     }
 
-    pub fn get_logic_game_me(
-        &self,
-        auth_token: &str,
-        kind: LogicGameKind,
-    ) -> Result<LogicGameMeResponse, ApiError> {
-        let response: LogicGameMeResponse = self.get_json(
+    pub fn get_sokoban_me(&self, auth_token: &str) -> Result<SokobanMeResponse, ApiError> {
+        let response: SokobanMeResponse = self.get_json(
             Method::GET,
-            kind.me_path(),
+            SOKOBAN_ME_PATH,
             auth_token,
-            &(self.base_url.clone() + kind.referer_path()),
+            &(self.base_url.clone() + "/sokoban"),
             Option::<&()>::None,
         )?;
         if !response.ok {
-            return Err(ApiError::Message(format!(
-                "获取{}账号信息失败：服务端返回 ok=false",
-                kind.title()
-            )));
+            return Err(ApiError::Message(
+                "get sokoban account info returned ok=false".to_string(),
+            ));
         }
         Ok(response)
     }
 
-    pub fn start_logic_game(
+    pub fn start_sokoban(
         &self,
         auth_token: &str,
-        kind: LogicGameKind,
         difficulty: &str,
-    ) -> Result<LogicGameStartResponse, ApiError> {
-        let mut response: LogicGameStartResponse = self.get_json(
+    ) -> Result<SokobanStartResponse, ApiError> {
+        let mut response: SokobanStartResponse = self.get_json(
             Method::POST,
-            kind.start_path(),
+            SOKOBAN_START_PATH,
             auth_token,
-            &(self.base_url.clone() + kind.referer_path()),
-            Some(&LogicGameStartRequest {
+            &(self.base_url.clone() + "/sokoban"),
+            Some(&SokobanStartRequest {
                 difficulty: difficulty.to_string(),
             }),
         )?;
@@ -596,65 +598,358 @@ impl ApiClient {
         Ok(response)
     }
 
-    pub fn step_logic_game(
+    pub fn move_sokoban(
         &self,
         auth_token: &str,
-        kind: LogicGameKind,
         session_id: i32,
-        step: &LogicGameStep,
-    ) -> Result<LogicGameActionResponse, ApiError> {
-        let payload = match step {
-            LogicGameStep::Move { direction } => serde_json::json!({
-                "session_id": session_id,
-                "direction": direction,
-            }),
-            LogicGameStep::Click { r, c } => serde_json::json!({
-                "session_id": session_id,
-                "r": r,
-                "c": c,
-            }),
-            LogicGameStep::Mark { action, r, c } => serde_json::json!({
-                "session_id": session_id,
-                "action": action,
-                "r": r,
-                "c": c,
-            }),
-            LogicGameStep::Paint {
-                action,
-                color,
-                r,
-                c,
-            } => serde_json::json!({
-                "session_id": session_id,
-                "action": action,
-                "color": color,
-                "r": r,
-                "c": c,
-            }),
-        };
+        direction: &str,
+    ) -> Result<SokobanMoveResponse, ApiError> {
         self.get_json(
             Method::POST,
-            kind.action_path(),
+            SOKOBAN_MOVE_PATH,
             auth_token,
-            &(self.base_url.clone() + kind.referer_path()),
-            Some(&payload),
+            &(self.base_url.clone() + "/sokoban"),
+            Some(&SokobanMoveRequest {
+                session_id,
+                direction: direction.to_string(),
+            }),
         )
     }
 
-    pub fn get_logic_game_history(
+    pub fn get_sokoban_history(
         &self,
         auth_token: &str,
-        kind: LogicGameKind,
-    ) -> Result<LogicGameHistoryResponse, ApiError> {
+    ) -> Result<SokobanHistoryResponse, ApiError> {
         self.get_json(
             Method::GET,
-            kind.history_path(),
+            SOKOBAN_HISTORY_PATH,
             auth_token,
-            &(self.base_url.clone() + kind.referer_path()),
+            &(self.base_url.clone() + "/sokoban"),
             Option::<&()>::None,
         )
     }
 
+    pub fn get_lightsout_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<LightsoutConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            LIGHTSOUT_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/lightsout"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_lightsout_me(&self, auth_token: &str) -> Result<LightsoutMeResponse, ApiError> {
+        let response: LightsoutMeResponse = self.get_json(
+            Method::GET,
+            LIGHTSOUT_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/lightsout"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "get lightsout account info returned ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_lightsout(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<LightsoutStartResponse, ApiError> {
+        let mut response: LightsoutStartResponse = self.get_json(
+            Method::POST,
+            LIGHTSOUT_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/lightsout"),
+            Some(&LightsoutStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn click_lightsout(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        r: i32,
+        c: i32,
+    ) -> Result<LightsoutClickResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            LIGHTSOUT_CLICK_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/lightsout"),
+            Some(&LightsoutClickRequest { session_id, r, c }),
+        )
+    }
+
+    pub fn get_lightsout_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<LightsoutHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            LIGHTSOUT_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/lightsout"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_maze_config(&self, auth_token: &str) -> Result<MazeConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MAZE_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/maze"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_maze_me(&self, auth_token: &str) -> Result<MazeMeResponse, ApiError> {
+        let response: MazeMeResponse = self.get_json(
+            Method::GET,
+            MAZE_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/maze"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "get maze account info returned ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_maze(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<MazeStartResponse, ApiError> {
+        let mut response: MazeStartResponse = self.get_json(
+            Method::POST,
+            MAZE_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/maze"),
+            Some(&MazeStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn move_maze(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        direction: &str,
+    ) -> Result<MazeMoveResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            MAZE_MOVE_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/maze"),
+            Some(&MazeMoveRequest {
+                session_id,
+                direction: direction.to_string(),
+            }),
+        )
+    }
+
+    pub fn get_maze_history(&self, auth_token: &str) -> Result<MazeHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MAZE_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/maze"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_nonogram_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<NonogramConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            NONOGRAM_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/nonogram"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_nonogram_me(&self, auth_token: &str) -> Result<NonogramMeResponse, ApiError> {
+        let response: NonogramMeResponse = self.get_json(
+            Method::GET,
+            NONOGRAM_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/nonogram"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "get nonogram account info returned ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_nonogram(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<NonogramStartResponse, ApiError> {
+        let mut response: NonogramStartResponse = self.get_json(
+            Method::POST,
+            NONOGRAM_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/nonogram"),
+            Some(&NonogramStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn click_nonogram(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        action: &str,
+        r: i32,
+        c: i32,
+    ) -> Result<NonogramClickResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            NONOGRAM_CLICK_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/nonogram"),
+            Some(&NonogramClickRequest {
+                session_id,
+                action: action.to_string(),
+                r,
+                c,
+            }),
+        )
+    }
+
+    pub fn get_nonogram_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<NonogramHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            NONOGRAM_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/nonogram"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_flowfree_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<FlowfreeConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            FLOWFREE_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/flowfree"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_flowfree_me(&self, auth_token: &str) -> Result<FlowfreeMeResponse, ApiError> {
+        let response: FlowfreeMeResponse = self.get_json(
+            Method::GET,
+            FLOWFREE_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/flowfree"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "get flowfree account info returned ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_flowfree(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<FlowfreeStartResponse, ApiError> {
+        let mut response: FlowfreeStartResponse = self.get_json(
+            Method::POST,
+            FLOWFREE_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/flowfree"),
+            Some(&FlowfreeStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn click_flowfree(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        action: &str,
+        color: i32,
+        r: i32,
+        c: i32,
+    ) -> Result<FlowfreeClickResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            FLOWFREE_CLICK_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/flowfree"),
+            Some(&FlowfreeClickRequest {
+                session_id,
+                action: action.to_string(),
+                color,
+                r,
+                c,
+            }),
+        )
+    }
+
+    pub fn get_flowfree_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<FlowfreeHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            FLOWFREE_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/flowfree"),
+            Option::<&()>::None,
+        )
+    }
     pub fn get_puzzle_15_config(
         &self,
         auth_token: &str,

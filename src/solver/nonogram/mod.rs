@@ -1,6 +1,13 @@
-use crate::model::{LogicGameSession, LogicGameStep};
+use crate::model::NonogramSession;
 
-pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonogramStep {
+    pub action: String,
+    pub r: i32,
+    pub c: i32,
+}
+
+pub fn solve(session: &NonogramSession) -> Result<Vec<NonogramStep>, String> {
     let width = usize_from_i32(session.width, "nonogram width")?;
     let height = usize_from_i32(session.height, "nonogram height")?;
     let solution = solve_grid(width, height, &session.row_clues, &session.col_clues)?;
@@ -8,7 +15,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
     for (r, row) in solution.iter().enumerate() {
         for (c, &filled) in row.iter().enumerate() {
             if filled && session.cells.get(r).and_then(|line| line.get(c)).copied() != Some(1) {
-                steps.push(LogicGameStep::Mark {
+                steps.push(NonogramStep {
                     action: "fill".to_string(),
                     r: r as i32,
                     c: c as i32,
@@ -226,17 +233,18 @@ mod tests {
 
     #[test]
     fn solver_solves_known_easy_board() {
-        let session = LogicGameSession {
+        let session = NonogramSession {
             width: 5,
             height: 5,
             row_clues: vec![vec![1], vec![3, 1], vec![3], vec![3], vec![4]],
             col_clues: vec![vec![4], vec![4], vec![5], vec![1], vec![1]],
             cells: vec![vec![0; 5]; 5],
-            ..LogicGameSession::default()
+            ..NonogramSession::default()
         };
 
         let steps = solve(&session).unwrap();
 
         assert_eq!(steps.len(), 15);
+        assert!(steps.iter().all(|step| step.action == "fill"));
     }
 }

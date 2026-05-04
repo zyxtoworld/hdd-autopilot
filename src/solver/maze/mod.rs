@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::model::{LogicGameSession, LogicGameStep, LogicPoint};
+use crate::model::{MazePoint, MazeSession};
 
-pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
+pub fn solve(session: &MazeSession) -> Result<Vec<String>, String> {
     let height = usize_from_i32(session.height, "迷宫高度")?;
     let width = usize_from_i32(session.width, "迷宫宽度")?;
     let start = point_index(session.player, width, height)?;
@@ -43,10 +43,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
         cur = parent;
     }
     directions.reverse();
-    Ok(directions
-        .into_iter()
-        .map(|direction| LogicGameStep::Move { direction })
-        .collect())
+    Ok(directions)
 }
 
 fn usize_from_i32(value: i32, label: &str) -> Result<usize, String> {
@@ -56,7 +53,7 @@ fn usize_from_i32(value: i32, label: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("{label}无效"))
 }
 
-fn point_index(point: LogicPoint, width: usize, height: usize) -> Result<usize, String> {
+fn point_index(point: MazePoint, width: usize, height: usize) -> Result<usize, String> {
     let r = usize::try_from(point[0]).map_err(|_| "坐标无效".to_string())?;
     let c = usize::try_from(point[1]).map_err(|_| "坐标无效".to_string())?;
     if r >= height || c >= width {
@@ -65,7 +62,7 @@ fn point_index(point: LogicPoint, width: usize, height: usize) -> Result<usize, 
     Ok(r * width + c)
 }
 
-fn direction_between(from: LogicPoint, to: LogicPoint) -> Result<&'static str, String> {
+fn direction_between(from: MazePoint, to: MazePoint) -> Result<&'static str, String> {
     match (to[0] - from[0], to[1] - from[1]) {
         (-1, 0) => Ok("up"),
         (1, 0) => Ok("down"),

@@ -1,8 +1,8 @@
-use crate::model::{LogicGameSession, LogicGameStep};
+use crate::model::LightsoutSession;
 
 const DIRS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
-pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
+pub fn solve(session: &LightsoutSession) -> Result<Vec<(i32, i32)>, String> {
     let cells = &session.cells;
     let size = cells.len();
     if size == 0 || cells.iter().any(|row| row.len() != size) {
@@ -63,10 +63,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
     let mut steps = Vec::new();
     for index in 0..vars {
         if bit(solution, index) {
-            steps.push(LogicGameStep::Click {
-                r: (index / size) as i32,
-                c: (index % size) as i32,
-            });
+            steps.push(((index / size) as i32, (index % size) as i32));
         }
     }
     Ok(steps)
@@ -82,7 +79,7 @@ mod tests {
 
     #[test]
     fn solver_clears_known_board() {
-        let session = LogicGameSession {
+        let session = LightsoutSession {
             cells: vec![
                 vec![0, 0, 0, 0, 1],
                 vec![0, 0, 0, 1, 1],
@@ -90,7 +87,7 @@ mod tests {
                 vec![1, 1, 1, 0, 0],
                 vec![0, 0, 0, 1, 0],
             ],
-            ..LogicGameSession::default()
+            ..LightsoutSession::default()
         };
 
         let steps = solve(&session).unwrap();

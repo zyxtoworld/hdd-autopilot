@@ -170,17 +170,22 @@ fn read_choice_interactive(allowed: &[&str], escape_choice: Option<&str>) -> io:
                         io::stdout().flush()?;
                     }
                     KeyCode::Char(ch) => {
-                        let candidate = ch.to_string();
-                        if allowed.contains(&candidate.as_str()) {
-                            if !input.is_empty() {
-                                for _ in input.chars() {
-                                    print!("\x08 \x08");
-                                }
-                            }
-                            input.clear();
+                        let candidate = format!("{input}{ch}");
+                        if is_allowed_choice_prefix(&candidate, allowed) {
                             input.push(ch);
                             print!("{}", ch);
                             io::stdout().flush()?;
+                        } else {
+                            let replacement = ch.to_string();
+                            if is_allowed_choice_prefix(&replacement, allowed) {
+                                for _ in input.chars() {
+                                    print!("\x08 \x08");
+                                }
+                                input.clear();
+                                input.push(ch);
+                                print!("{}", ch);
+                                io::stdout().flush()?;
+                            }
                         }
                     }
                     _ => {}
@@ -190,6 +195,10 @@ fn read_choice_interactive(allowed: &[&str], escape_choice: Option<&str>) -> io:
     })();
     disable_raw_mode()?;
     result
+}
+
+fn is_allowed_choice_prefix(candidate: &str, allowed: &[&str]) -> bool {
+    !candidate.is_empty() && allowed.iter().any(|choice| choice.starts_with(candidate))
 }
 
 fn read_choice_line(_allowed: &[&str], _escape_choice: Option<&str>) -> io::Result<String> {
@@ -212,5 +221,16 @@ mod tests {
         assert_eq!(prompt_field_name("请输入密码: "), "密码");
         assert_eq!(prompt_field_name(ADD_ACCOUNT_PASSWORD_PROMPT), "密码");
         assert_eq!(prompt_field_name("请输入内容: "), "输入");
+    }
+
+    #[test]
+    fn choice_prefix_accepts_multi_digit_menu_options() {
+        let allowed = ["1", "2", "10", "11", "15"];
+
+        assert!(is_allowed_choice_prefix("1", &allowed));
+        assert!(is_allowed_choice_prefix("10", &allowed));
+        assert!(is_allowed_choice_prefix("15", &allowed));
+        assert!(!is_allowed_choice_prefix("16", &allowed));
+        assert!(!is_allowed_choice_prefix("", &allowed));
     }
 }

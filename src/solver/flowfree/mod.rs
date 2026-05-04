@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::model::{LogicEndpoint, LogicGameSession, LogicGameStep, LogicPoint};
+use crate::model::{FlowfreeEndpoint, FlowfreePoint, FlowfreeSession};
 
 const DIRS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 const SEARCH_LIMIT: usize = 2_000_000;
@@ -8,12 +8,20 @@ const SEARCH_LIMIT: usize = 2_000_000;
 #[derive(Clone)]
 struct State {
     grid: Vec<Vec<i32>>,
-    paths: HashMap<i32, Vec<LogicPoint>>,
+    paths: HashMap<i32, Vec<FlowfreePoint>>,
     complete: HashSet<i32>,
     calls: usize,
 }
 
-pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowfreeStep {
+    pub action: String,
+    pub color: i32,
+    pub r: i32,
+    pub c: i32,
+}
+
+pub fn solve(session: &FlowfreeSession) -> Result<Vec<FlowfreeStep>, String> {
     let height = usize_from_i32(session.height, "flowfree height")?;
     let width = usize_from_i32(session.width, "flowfree width")?;
     let endpoints = session.endpoints.clone();
@@ -27,7 +35,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
         complete: HashSet::new(),
         calls: 0,
     };
-    for LogicEndpoint(color, start, end) in &endpoints {
+    for FlowfreeEndpoint(color, start, end) in &endpoints {
         point_index(*start, width, height)?;
         point_index(*end, width, height)?;
         state.grid[start[0] as usize][start[1] as usize] = *color;
@@ -49,7 +57,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
             continue;
         };
         for point in path {
-            steps.push(LogicGameStep::Paint {
+            steps.push(FlowfreeStep {
                 action: "paint".to_string(),
                 color,
                 r: point[0],
@@ -61,7 +69,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
 }
 
 fn search(
-    endpoints: &[LogicEndpoint],
+    endpoints: &[FlowfreeEndpoint],
     state: &mut State,
     width: usize,
     height: usize,
@@ -82,7 +90,7 @@ fn search(
         }
     }
 
-    let mut best: Option<(LogicEndpoint, Vec<(LogicPoint, bool)>)> = None;
+    let mut best: Option<(FlowfreeEndpoint, Vec<(FlowfreePoint, bool)>)> = None;
     for endpoint in endpoints {
         if state.complete.contains(&endpoint.0) {
             continue;
@@ -125,11 +133,11 @@ fn search(
 }
 
 fn legal_moves(
-    endpoint: &LogicEndpoint,
+    endpoint: &FlowfreeEndpoint,
     state: &State,
     width: usize,
     height: usize,
-) -> Vec<(LogicPoint, bool)> {
+) -> Vec<(FlowfreePoint, bool)> {
     let Some(path) = state.paths.get(&endpoint.0) else {
         return Vec::new();
     };
@@ -152,7 +160,7 @@ fn legal_moves(
     moves
 }
 
-fn reachable(endpoint: &LogicEndpoint, state: &State, width: usize, height: usize) -> bool {
+fn reachable(endpoint: &FlowfreeEndpoint, state: &State, width: usize, height: usize) -> bool {
     let Some(path) = state.paths.get(&endpoint.0) else {
         return false;
     };
@@ -180,7 +188,7 @@ fn reachable(endpoint: &LogicEndpoint, state: &State, width: usize, height: usiz
     false
 }
 
-fn manhattan(a: LogicPoint, b: LogicPoint) -> i32 {
+fn manhattan(a: FlowfreePoint, b: FlowfreePoint) -> i32 {
     (a[0] - b[0]).abs() + (a[1] - b[1]).abs()
 }
 
@@ -191,7 +199,7 @@ fn usize_from_i32(value: i32, label: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("{label} is invalid"))
 }
 
-fn point_index(point: LogicPoint, width: usize, height: usize) -> Result<usize, String> {
+fn point_index(point: FlowfreePoint, width: usize, height: usize) -> Result<usize, String> {
     let r = usize::try_from(point[0]).map_err(|_| "invalid coordinate".to_string())?;
     let c = usize::try_from(point[1]).map_err(|_| "invalid coordinate".to_string())?;
     if r >= height || c >= width {
@@ -206,16 +214,16 @@ mod tests {
 
     #[test]
     fn solver_connects_known_easy_board() {
-        let session = LogicGameSession {
+        let session = FlowfreeSession {
             width: 5,
             height: 5,
             endpoints: vec![
-                LogicEndpoint(1, [0, 0], [4, 0]),
-                LogicEndpoint(2, [0, 4], [4, 4]),
-                LogicEndpoint(3, [2, 1], [2, 3]),
-                LogicEndpoint(4, [1, 2], [3, 2]),
+                FlowfreeEndpoint(1, [0, 0], [4, 0]),
+                FlowfreeEndpoint(2, [0, 4], [4, 4]),
+                FlowfreeEndpoint(3, [2, 1], [2, 3]),
+                FlowfreeEndpoint(4, [1, 2], [3, 2]),
             ],
-            ..LogicGameSession::default()
+            ..FlowfreeSession::default()
         };
 
         let steps = solve(&session).unwrap();

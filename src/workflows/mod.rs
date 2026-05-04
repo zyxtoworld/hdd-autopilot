@@ -3,7 +3,6 @@ pub(crate) mod common;
 pub mod flowfree;
 pub mod free_play;
 pub mod lightsout;
-pub(crate) mod logic_game_common;
 pub mod maze;
 pub mod memory;
 pub mod minesweeper;

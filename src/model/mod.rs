@@ -8,13 +8,17 @@ pub(crate) fn is_false(value: &bool) -> bool {
 
 mod auth;
 mod checkin;
-mod logic_games;
+mod flowfree;
+mod lightsout;
+mod maze;
 mod memory;
 mod minesweeper;
+mod nonogram;
 mod puzzle_15;
 mod puzzle_2048;
 mod scratch;
 mod sheepmatch;
+mod sokoban;
 mod sudoku;
 
 pub use auth::{
@@ -24,11 +28,20 @@ pub use auth::{
 pub use checkin::{
     CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse, CheckinUser,
 };
-pub use logic_games::{
-    LogicEdge, LogicEndpoint, LogicGameActionResponse, LogicGameConfigResponse,
-    LogicGameDifficultyConfig, LogicGameHistoryResponse, LogicGameKind, LogicGameMeResponse,
-    LogicGameSession, LogicGameStartRequest, LogicGameStartResponse, LogicGameStep, LogicGameUser,
-    LogicPath, LogicPoint,
+pub use flowfree::{
+    FlowfreeClickRequest, FlowfreeClickResponse, FlowfreeConfigResponse, FlowfreeDifficultyConfig,
+    FlowfreeEndpoint, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreePath, FlowfreePoint,
+    FlowfreeSession, FlowfreeStartRequest, FlowfreeStartResponse, FlowfreeUser,
+};
+pub use lightsout::{
+    LightsoutClickRequest, LightsoutClickResponse, LightsoutConfigResponse,
+    LightsoutDifficultyConfig, LightsoutHistoryResponse, LightsoutMeResponse, LightsoutSession,
+    LightsoutStartRequest, LightsoutStartResponse, LightsoutUser,
+};
+pub use maze::{
+    MazeConfigResponse, MazeDifficultyConfig, MazeEdge, MazeHistoryResponse, MazeMeResponse,
+    MazeMoveRequest, MazeMoveResponse, MazePoint, MazeSession, MazeStartRequest, MazeStartResponse,
+    MazeUser,
 };
 pub use memory::{
     MEMORY_DIFFICULTY_EASY, MEMORY_DIFFICULTY_HARD, MEMORY_DIFFICULTY_HELL,
@@ -42,6 +55,11 @@ pub use minesweeper::{
     MinesweeperClickRequest, MinesweeperClickResponse, MinesweeperConfigResponse,
     MinesweeperDifficultyConfig, MinesweeperHistoryResponse, MinesweeperMeResponse,
     MinesweeperSession, MinesweeperStartRequest, MinesweeperStartResponse, MinesweeperUser,
+};
+pub use nonogram::{
+    NonogramClickRequest, NonogramClickResponse, NonogramConfigResponse, NonogramDifficultyConfig,
+    NonogramHistoryResponse, NonogramMeResponse, NonogramSession, NonogramStartRequest,
+    NonogramStartResponse, NonogramUser,
 };
 pub use puzzle_15::{
     PUZZLE_15_DIFFICULTY_CLASSIC, PUZZLE_15_DIFFICULTY_EASY, PUZZLE_15_DIFFICULTY_HARD,
@@ -68,6 +86,11 @@ pub use sheepmatch::{
     DIFFICULTY_HARD, DIFFICULTY_HELL, DIFFICULTY_NORMAL, DIFFICULTY_ORDER, GameDifficultyConfig,
     HistoryEntry, HistoryItem, HistoryResponse, Powerups, RoundResultSummary, SessionSnapshot,
     StartRequest, StartResponse, StepRequest, StepResponse, Tile, TileMeResponse, TileMeUser,
+};
+pub use sokoban::{
+    SokobanConfigResponse, SokobanDifficultyConfig, SokobanHistoryResponse, SokobanMeResponse,
+    SokobanMoveRequest, SokobanMoveResponse, SokobanPoint, SokobanSession, SokobanStartRequest,
+    SokobanStartResponse, SokobanUser,
 };
 pub use sudoku::{
     SUDOKU_DIFFICULTY_EASY, SUDOKU_DIFFICULTY_EXPERT, SUDOKU_DIFFICULTY_HARD,

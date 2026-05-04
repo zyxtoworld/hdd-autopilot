@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::model::{LogicGameSession, LogicGameStep, LogicPoint};
+use crate::model::{SokobanPoint, SokobanSession};
 
 const DIRS: [(i32, i32, &str); 4] = [
     (-1, 0, "up"),
@@ -22,7 +22,7 @@ struct Node {
     direction: Option<&'static str>,
 }
 
-pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
+pub fn solve(session: &SokobanSession) -> Result<Vec<String>, String> {
     let height = usize_from_i32(session.height, "推箱子高度")?;
     let width = usize_from_i32(session.width, "推箱子宽度")?;
     let walls = points_to_set(&session.walls, width, height)?;
@@ -104,7 +104,7 @@ pub fn solve(session: &LogicGameSession) -> Result<Vec<LogicGameStep>, String> {
     Err("推箱子没有找到通关路径".to_string())
 }
 
-fn reconstruct_path(nodes: &[Node], mut index: usize) -> Vec<LogicGameStep> {
+fn reconstruct_path(nodes: &[Node], mut index: usize) -> Vec<String> {
     let mut directions = Vec::new();
     while let Some(parent) = nodes[index].parent {
         if let Some(direction) = nodes[index].direction {
@@ -114,9 +114,6 @@ fn reconstruct_path(nodes: &[Node], mut index: usize) -> Vec<LogicGameStep> {
     }
     directions.reverse();
     directions
-        .into_iter()
-        .map(|direction| LogicGameStep::Move { direction })
-        .collect()
 }
 
 fn has_dead_box(
@@ -159,7 +156,7 @@ fn usize_from_i32(value: i32, label: &str) -> Result<usize, String> {
 }
 
 fn points_to_set(
-    points: &[LogicPoint],
+    points: &[SokobanPoint],
     width: usize,
     height: usize,
 ) -> Result<HashSet<usize>, String> {
@@ -169,7 +166,7 @@ fn points_to_set(
         .collect()
 }
 
-fn point_index(point: LogicPoint, width: usize, height: usize) -> Result<usize, String> {
+fn point_index(point: SokobanPoint, width: usize, height: usize) -> Result<usize, String> {
     let r = usize::try_from(point[0]).map_err(|_| "坐标无效".to_string())?;
     let c = usize::try_from(point[1]).map_err(|_| "坐标无效".to_string())?;
     if r >= height || c >= width {
