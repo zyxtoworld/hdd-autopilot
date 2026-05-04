@@ -205,10 +205,6 @@ pub(super) fn merge_round_into_summary(
     }
 }
 
-pub(super) fn should_stop_after_round(result: &SokobanRoundSummary) -> bool {
-    !result.error_message.trim().is_empty() && is_pending_round_status(&result.status)
-}
-
 struct RoundBuildContext<'a> {
     continued: bool,
     progress: &'a RoundProgress,

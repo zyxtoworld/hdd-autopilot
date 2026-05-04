@@ -10,7 +10,13 @@ pub struct NonogramStep {
 pub fn solve(session: &NonogramSession) -> Result<Vec<NonogramStep>, String> {
     let width = usize_from_i32(session.width, "nonogram width")?;
     let height = usize_from_i32(session.height, "nonogram height")?;
-    let solution = solve_grid(width, height, &session.row_clues, &session.col_clues)?;
+    let solution = solve_grid(
+        width,
+        height,
+        &session.row_clues,
+        &session.col_clues,
+        &session.cells,
+    )?;
     let mut steps = Vec::new();
     for (r, row) in solution.iter().enumerate() {
         for (c, &filled) in row.iter().enumerate() {
@@ -31,6 +37,7 @@ fn solve_grid(
     height: usize,
     row_clues: &[Vec<i32>],
     col_clues: &[Vec<i32>],
+    cells: &[Vec<i32>],
 ) -> Result<Vec<Vec<bool>>, String> {
     if row_clues.len() != height || col_clues.len() != width {
         return Err("nonogram clue dimensions do not match board size".to_string());
@@ -43,13 +50,27 @@ fn solve_grid(
         .iter()
         .map(|clue| line_patterns(height, clue))
         .collect::<Result<Vec<_>, _>>()?;
-    let known = vec![vec![None; width]; height];
+    let known = known_from_cells(width, height, cells);
     search(known, &row_patterns, &col_patterns)
         .ok_or_else(|| "nonogram has no solution matching the clues".to_string())
 }
 
 type KnownGrid = Vec<Vec<Option<bool>>>;
 type LinePatterns = Vec<Vec<Vec<bool>>>;
+
+fn known_from_cells(width: usize, height: usize, cells: &[Vec<i32>]) -> KnownGrid {
+    let mut known = vec![vec![None; width]; height];
+    for (r, row) in cells.iter().take(height).enumerate() {
+        for (c, &value) in row.iter().take(width).enumerate() {
+            known[r][c] = match value {
+                1 => Some(true),
+                2 => Some(false),
+                _ => None,
+            };
+        }
+    }
+    known
+}
 
 #[derive(Clone)]
 struct Propagation {
@@ -245,6 +266,30 @@ mod tests {
         let steps = solve(&session).unwrap();
 
         assert_eq!(steps.len(), 15);
+        assert!(steps.iter().all(|step| step.action == "fill"));
+    }
+
+    #[test]
+    fn solver_respects_already_filled_cells() {
+        let session = NonogramSession {
+            width: 5,
+            height: 5,
+            row_clues: vec![vec![1], vec![3, 1], vec![3], vec![3], vec![4]],
+            col_clues: vec![vec![4], vec![4], vec![5], vec![1], vec![1]],
+            cells: vec![
+                vec![0, 0, 1, 0, 0],
+                vec![0, 0, 0, 0, 0],
+                vec![0, 0, 0, 0, 0],
+                vec![0, 0, 0, 0, 0],
+                vec![0, 0, 0, 0, 0],
+            ],
+            ..NonogramSession::default()
+        };
+
+        let steps = solve(&session).unwrap();
+
+        assert_eq!(steps.len(), 14);
+        assert!(!steps.iter().any(|step| step.r == 0 && step.c == 2));
         assert!(steps.iter().all(|step| step.action == "fill"));
     }
 }

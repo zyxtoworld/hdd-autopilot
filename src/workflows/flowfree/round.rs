@@ -2,12 +2,12 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::model::{FlowfreeClickResponse, FlowfreeConfigResponse, FlowfreeSession};
+use crate::model::{FlowfreeConfigResponse, FlowfreeFinishResponse, FlowfreeMove, FlowfreeSession};
 use crate::solver::flowfree;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    with_auth_retry_api_until_success,
 };
 
 use super::types::{FlowfreeDifficultySummary, FlowfreeRoundSummary, RoundProgress};
@@ -63,48 +63,42 @@ pub(super) fn play_round(
         ));
     }
 
-    let mut actual_steps = 0i32;
-    for step in steps {
-        ui::check_cancel(cancel_flag)?;
-        if config.min_interval_ms > 0 {
-            ui::sleep_with_cancel(
-                cancel_flag,
-                std::time::Duration::from_millis(config.min_interval_ms as u64),
-            )?;
-        }
-        let response = step_once(
+    if config.min_interval_ms > 0 && planned_steps > 0 {
+        ui::sleep_with_cancel(
             cancel_flag,
-            state,
-            runtime,
-            StepAttempt {
-                session_id: session.session_id,
-                action: step.action.clone(),
-                color: step.color,
-                r: step.r,
-                c: step.c,
-                step_number: actual_steps + 1,
-            },
+            std::time::Duration::from_millis(config.min_interval_ms as u64 * planned_steps as u64),
         )?;
-        actual_steps += 1;
-        if !response.ok {
-            return Ok(build_round_summary(
-                runtime.email(),
-                &session,
-                RoundBuildContext {
-                    continued,
-                    progress: &progress,
-                    started,
-                    planned_steps,
-                    actual_steps,
-                    error_message: "操作接口返回 ok=false".to_string(),
-                },
-            ));
-        }
-        session = merge_session(&session, response);
-        if is_finished(&session) {
-            break;
-        }
     }
+    ui::check_cancel(cancel_flag)?;
+    let moves = steps
+        .into_iter()
+        .map(|step| FlowfreeMove(step.action, step.color, step.r, step.c))
+        .collect::<Vec<_>>();
+    let response = finish_once(
+        cancel_flag,
+        state,
+        runtime,
+        FinishAttempt {
+            session_id: session.session_id,
+            moves,
+        },
+    )?;
+    let actual_steps = planned_steps;
+    if !response.ok {
+        return Ok(build_round_summary(
+            runtime.email(),
+            &session,
+            RoundBuildContext {
+                continued,
+                progress: &progress,
+                started,
+                planned_steps,
+                actual_steps,
+                error_message: "操作接口返回 ok=false".to_string(),
+            },
+        ));
+    }
+    session = merge_session(&session, response);
 
     let mut result = build_round_summary(
         runtime.email(),
@@ -124,41 +118,29 @@ pub(super) fn play_round(
     Ok(result)
 }
 
-struct StepAttempt {
+struct FinishAttempt {
     session_id: i32,
-    action: String,
-    color: i32,
-    r: i32,
-    c: i32,
-    step_number: i32,
+    moves: Vec<FlowfreeMove>,
 }
 
-fn step_once(
+fn finish_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    attempt: StepAttempt,
-) -> io::Result<FlowfreeClickResponse> {
-    let operation = retry_operation_with_step("flowfree click", attempt.step_number);
+    attempt: FinishAttempt,
+) -> io::Result<FlowfreeFinishResponse> {
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        &operation,
+        "flowfree finish",
         |client, auth_token| {
-            client.click_flowfree(
-                auth_token,
-                attempt.session_id,
-                &attempt.action,
-                attempt.color,
-                attempt.r,
-                attempt.c,
-            )
+            client.finish_flowfree(auth_token, attempt.session_id, attempt.moves.clone())
         },
     )
 }
 
-fn merge_session(previous: &FlowfreeSession, response: FlowfreeClickResponse) -> FlowfreeSession {
+fn merge_session(previous: &FlowfreeSession, response: FlowfreeFinishResponse) -> FlowfreeSession {
     let mut session = if response.session.session_id > 0 {
         response.session
     } else {
@@ -216,10 +198,6 @@ pub(super) fn merge_round_into_summary(
     } else if !is_pending_round_status(&result.status) {
         summary.failed += 1;
     }
-}
-
-pub(super) fn should_stop_after_round(result: &FlowfreeRoundSummary) -> bool {
-    !result.error_message.trim().is_empty() && is_pending_round_status(&result.status)
 }
 
 struct RoundBuildContext<'a> {

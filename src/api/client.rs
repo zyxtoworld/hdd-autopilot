@@ -2,28 +2,28 @@ use std::time::Duration;
 
 use crate::model::{
     AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
-    CheckinTodayResponse, ConfigResponse, FlowfreeClickRequest, FlowfreeClickResponse,
-    FlowfreeConfigResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeStartRequest,
-    FlowfreeStartResponse, HistoryResponse, LightsoutClickRequest, LightsoutClickResponse,
-    LightsoutConfigResponse, LightsoutHistoryResponse, LightsoutMeResponse, LightsoutStartRequest,
-    LightsoutStartResponse, LoginRequest, LoginResponse, MazeConfigResponse, MazeHistoryResponse,
-    MazeMeResponse, MazeMoveRequest, MazeMoveResponse, MazeStartRequest, MazeStartResponse,
-    MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
-    MemoryMeResponse, MemoryStartRequest, MemoryStartResponse, MinesweeperClickRequest,
-    MinesweeperClickResponse, MinesweeperConfigResponse, MinesweeperHistoryResponse,
-    MinesweeperMeResponse, MinesweeperStartRequest, MinesweeperStartResponse, NonogramClickRequest,
-    NonogramClickResponse, NonogramConfigResponse, NonogramHistoryResponse, NonogramMeResponse,
-    NonogramStartRequest, NonogramStartResponse, Puzzle15ConfigResponse, Puzzle15HistoryResponse,
-    Puzzle15MeResponse, Puzzle15MoveRequest, Puzzle15MoveResponse, Puzzle15StartRequest,
-    Puzzle15StartResponse, Puzzle2048AbandonRequest, Puzzle2048ConfigResponse,
-    Puzzle2048HistoryResponse, Puzzle2048MeResponse, Puzzle2048MoveRequest, Puzzle2048MoveResponse,
-    Puzzle2048StartRequest, Puzzle2048StartResponse, ScratchHistoryResponse, ScratchPlayRequest,
-    ScratchPlayResponse, ScratchRevealRequest, ScratchRevealResponse, SessionCookie,
-    SokobanConfigResponse, SokobanHistoryResponse, SokobanMeResponse, SokobanMoveRequest,
-    SokobanMoveResponse, SokobanStartRequest, SokobanStartResponse, StartRequest, StartResponse,
-    StepRequest, StepResponse, SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse,
-    SudokuHistoryResponse, SudokuMeResponse, SudokuStartRequest, SudokuStartResponse,
-    TileMeResponse,
+    CheckinTodayResponse, ConfigResponse, FlowfreeConfigResponse, FlowfreeFinishRequest,
+    FlowfreeFinishResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeMove,
+    FlowfreeStartRequest, FlowfreeStartResponse, HistoryResponse, LightsoutClickRequest,
+    LightsoutClickResponse, LightsoutConfigResponse, LightsoutHistoryResponse, LightsoutMeResponse,
+    LightsoutStartRequest, LightsoutStartResponse, LoginRequest, LoginResponse, MazeConfigResponse,
+    MazeHistoryResponse, MazeMeResponse, MazeMoveRequest, MazeMoveResponse, MazeStartRequest,
+    MazeStartResponse, MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse,
+    MemoryHistoryResponse, MemoryMeResponse, MemoryStartRequest, MemoryStartResponse,
+    MinesweeperClickRequest, MinesweeperClickResponse, MinesweeperConfigResponse,
+    MinesweeperHistoryResponse, MinesweeperMeResponse, MinesweeperStartRequest,
+    MinesweeperStartResponse, NonogramClickRequest, NonogramClickResponse, NonogramConfigResponse,
+    NonogramHistoryResponse, NonogramMeResponse, NonogramStartRequest, NonogramStartResponse,
+    Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest,
+    Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
+    Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
+    Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
+    ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
+    ScratchRevealResponse, SessionCookie, SokobanConfigResponse, SokobanHistoryResponse,
+    SokobanMeResponse, SokobanMoveRequest, SokobanMoveResponse, SokobanStartRequest,
+    SokobanStartResponse, StartRequest, StartResponse, StepRequest, StepResponse,
+    SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse,
+    SudokuMeResponse, SudokuStartRequest, SudokuStartResponse, TileMeResponse,
 };
 use crate::storage::{build_authorization, normalize_base_url};
 use reqwest::blocking::Client;
@@ -38,7 +38,7 @@ use super::cookies::{cookie_header_value, merge_session_cookies, normalize_sessi
 use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
-    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, FLOWFREE_CLICK_PATH, FLOWFREE_CONFIG_PATH,
+    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, FLOWFREE_CONFIG_PATH, FLOWFREE_FINISH_PATH,
     FLOWFREE_HISTORY_PATH, FLOWFREE_ME_PATH, FLOWFREE_START_PATH, LIGHTSOUT_CLICK_PATH,
     LIGHTSOUT_CONFIG_PATH, LIGHTSOUT_HISTORY_PATH, LIGHTSOUT_ME_PATH, LIGHTSOUT_START_PATH,
     LOGIN_PATH, MAZE_CONFIG_PATH, MAZE_HISTORY_PATH, MAZE_ME_PATH, MAZE_MOVE_PATH, MAZE_START_PATH,
@@ -914,27 +914,18 @@ impl ApiClient {
         Ok(response)
     }
 
-    pub fn click_flowfree(
+    pub fn finish_flowfree(
         &self,
         auth_token: &str,
         session_id: i32,
-        action: &str,
-        color: i32,
-        r: i32,
-        c: i32,
-    ) -> Result<FlowfreeClickResponse, ApiError> {
+        moves: Vec<FlowfreeMove>,
+    ) -> Result<FlowfreeFinishResponse, ApiError> {
         self.get_json(
             Method::POST,
-            FLOWFREE_CLICK_PATH,
+            FLOWFREE_FINISH_PATH,
             auth_token,
             &(self.base_url.clone() + "/flowfree"),
-            Some(&FlowfreeClickRequest {
-                session_id,
-                action: action.to_string(),
-                color,
-                r,
-                c,
-            }),
+            Some(&FlowfreeFinishRequest { session_id, moves }),
         )
     }
 

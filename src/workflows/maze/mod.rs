@@ -22,7 +22,7 @@ use self::log::{
 };
 use self::round::{
     is_active_session_error, is_daily_limit_error, is_pending_session, merge_round_into_summary,
-    play_round, should_stop_after_round,
+    play_round,
 };
 use self::types::{MazeDifficultySummary, MazeRoundSummary, RoundProgress};
 
@@ -203,16 +203,6 @@ fn run_account(
         merge_round_into_cache(progress_cache, runtime.email(), result);
     }
     let mut summaries = progress_cache.summaries.clone();
-    if drained.iter().any(should_stop_after_round) {
-        let all = summaries.into_values().collect::<Vec<_>>();
-        append_account_summary(
-            &state.lock().unwrap().result_log_dir,
-            runtime.email(),
-            current_unix_ms(),
-            &all,
-        )?;
-        return Ok(all);
-    }
     let mut all_summaries = Vec::new();
 
     for difficulty in difficulties {
@@ -430,9 +420,6 @@ fn run_difficulty(
                         merge_round_into_summary(&mut summary, &result);
                         used_today.insert(difficulty.to_string(), current_round_index);
                     }
-                    if should_stop_after_round(&result) {
-                        return Ok(summary);
-                    }
                     if item.difficulty == difficulty {
                         continue 'rounds;
                     }
@@ -460,9 +447,6 @@ fn run_difficulty(
         merge_round_into_cache(progress_cache, runtime.email(), &result);
         merge_round_into_summary(&mut summary, &result);
         used_today.insert(difficulty.to_string(), current_round_index);
-        if should_stop_after_round(&result) {
-            return Ok(summary);
-        }
     }
     Ok(summary)
 }

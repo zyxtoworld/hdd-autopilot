@@ -29,9 +29,10 @@ pub use checkin::{
     CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse, CheckinUser,
 };
 pub use flowfree::{
-    FlowfreeClickRequest, FlowfreeClickResponse, FlowfreeConfigResponse, FlowfreeDifficultyConfig,
-    FlowfreeEndpoint, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreePath, FlowfreePoint,
-    FlowfreeSession, FlowfreeStartRequest, FlowfreeStartResponse, FlowfreeUser,
+    FlowfreeConfigResponse, FlowfreeDifficultyConfig, FlowfreeEndpoint, FlowfreeFinishRequest,
+    FlowfreeFinishResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeMove,
+    FlowfreePath, FlowfreePoint, FlowfreeSession, FlowfreeStartRequest, FlowfreeStartResponse,
+    FlowfreeUser,
 };
 pub use lightsout::{
     LightsoutClickRequest, LightsoutClickResponse, LightsoutConfigResponse,

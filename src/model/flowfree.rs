@@ -126,16 +126,16 @@ pub struct FlowfreeStartResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct FlowfreeClickRequest {
+pub struct FlowfreeMove(pub String, pub i32, pub i32, pub i32);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FlowfreeFinishRequest {
     pub session_id: i32,
-    pub action: String,
-    pub color: i32,
-    pub r: i32,
-    pub c: i32,
+    pub moves: Vec<FlowfreeMove>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct FlowfreeClickResponse {
+pub struct FlowfreeFinishResponse {
     #[serde(default)]
     pub balance: f64,
     #[serde(default)]

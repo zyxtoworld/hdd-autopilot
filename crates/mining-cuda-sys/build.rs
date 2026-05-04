@@ -18,6 +18,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDAToolkit_ROOT");
     println!("cargo:rerun-if-env-changed=CUDACXX");
     println!("cargo:rerun-if-env-changed=CMAKE_CUDA_ARCHITECTURES");
+    println!("cargo:rerun-if-env-changed=CMAKE_MAKE_PROGRAM");
     println!("cargo:rerun-if-env-changed=CUDAARCHS");
     println!("cargo:rerun-if-env-changed=HDD_AUTOPILOT_REQUIRE_CUDA");
     println!("cargo:rerun-if-changed=../../native/mining-cuda/CMakeLists.txt");
@@ -110,11 +111,28 @@ fn build_native(target: &Target, nvcc_path: PathBuf) -> Option<PathBuf> {
             .define("MINING_CUDA_LIBRARY_ONLY", "ON")
             .define("CMAKE_CUDA_COMPILER", nvcc_path)
             .build_target("mining_cuda_core");
+        configure_cmake_generator(target, &mut config);
         if target.os == "macos" {
             config.define("CMAKE_OSX_ARCHITECTURES", "x86_64");
         }
         config.build()
     })
+}
+
+fn configure_cmake_generator(target: &Target, config: &mut cmake::Config) {
+    if target.os != "windows" {
+        return;
+    }
+    let ninja = env::var_os("CMAKE_MAKE_PROGRAM")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(find_visual_studio_ninja)
+        .or_else(|| find_program_in_path("ninja.exe"))
+        .or_else(|| find_program_in_path("ninja"));
+    if let Some(ninja) = ninja {
+        config.generator("Ninja");
+        config.define("CMAKE_MAKE_PROGRAM", ninja);
+    }
 }
 
 fn run_with_suppressed_panic_output<T, F>(f: F) -> Option<T>
