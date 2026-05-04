@@ -1,5 +1,11 @@
 # Runtime data and secrets
 var/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Build outputs
 dist/

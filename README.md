@@ -7,7 +7,7 @@
 - 自动挖矿：支持邀请码、余额兑换码两类奖励，支持邀请码优先、余额码优先、只挖邀请码、只挖余额码四种模式。
 - CPU + GPU 自动调优挖矿：CPU 始终可用；GPU 后端按平台尝试 CUDA、OpenCL、Metal，并根据真实 HTTP challenge 参数和设备参数自动筛选最优配置。
 - 多账号缓存：添加账号时登录并保存账号状态，后续任务会按 cookies、token、密码重登的顺序恢复登录。
-- 白嫖玩法：自动签到、羊了个羊、谜题 2048、记忆翻牌、华容道、数独。
+- 白嫖玩法：自动签到、扫雷、羊了个羊、谜题 2048、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独。
 - 全自动白嫖：对每个账号并发运行所有白嫖玩法，最后合并账号状态并保存。
 - 赌狗玩法：自动随机刮刮乐。
 - 任务日志视图：长任务在 CLI 内显示可滚动日志，运行中可按 `ESC` 请求停止。
@@ -67,7 +67,7 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 
 脚本功能分为：
 
-- 白嫖玩法：全自动运行所有白嫖玩法、自动签到、自动羊了个羊、自动谜题 2048、自动记忆翻牌、自动华容道、自动数独。
+- 白嫖玩法：全自动运行所有白嫖玩法、自动扫雷、自动羊了个羊、自动谜题 2048、自动推箱子、自动点灯、自动迷宫、自动数织、自动连线、自动记忆翻牌、自动华容道、自动数独、自动签到。
 - 赌狗玩法：自动随机刮刮乐。
 
 ## 挖矿逻辑
@@ -108,17 +108,23 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 
 - 任务按账号并发执行。
 - 每个账号先恢复登录状态，必要时自动重登并更新缓存。
-- 玩法会先读取配置、账号状态和历史记录。
-- 如果接口返回未完成残局，会先继续残局，再按当天剩余次数开新局。
-- 单局失败不会阻止后续次数；只要接口显示仍有剩余次数，就继续运行。
+- 玩法会按各自接口读取配置和 `/me` 账号状态；免费玩法的剩余次数使用 `daily_plays_remaining` / `daily_plays_used` 或开局响应里的剩余字段，不用 history 条数倒推。
+- 如果 `/me` 返回未完成残局，会先继续残局，再按玩法策略开新局。
+- 单局失败不会阻止后续次数；只要接口仍允许继续开局，就继续运行。
 - 网络错误、408、425、429、5xx 等临时错误会按上限重试。
 - `pending`、`running`、`active` 只表示进行中，不会记为成功或失败。
 
 当前自动玩法：
 
 - 自动签到：检查今日状态，未签到时领取奖励并记录余额变化。
-- 自动羊了个羊：按难度处理剩余次数，使用接口快照推进固定点击队列。
+- 自动扫雷：使用错旗修复、确定性规则、子集/重叠约束和全局雷数加权概率枚举求解；先续 `/me` 返回的当前残局，再按接口奖励从高到低开新局；如果接口返回剩余次数字段会优先使用，否则不依赖只返回最近 12 局的 history，改为直到接口拒绝继续开局。
+- 自动羊了个羊：按 `/me.daily_plays_remaining` 分难度处理剩余次数，使用 `/me.active_session` 续残局，并用接口快照推进固定点击队列。
 - 自动谜题 2048：支持 3x3 / 4x4 / 5x5，使用合法移动枚举和 expectimax 策略求解。
+- 自动推箱子：使用独立 `solver/sokoban` 搜索箱子和玩家状态，带死角剪枝；推箱子、点灯、迷宫、数织、连线都按 `/me.daily_plays_remaining` 查到的每个难度剩余次数依次跑 `easy -> normal -> hard`。
+- 自动点灯：使用独立 `solver/lightsout` 对棋盘建立 GF(2) 线性方程，一次求出需要点击的格子。
+- 自动迷宫：使用独立 `solver/maze` 按服务端返回的开放边做 BFS，提交最短方向序列。
+- 自动数织：使用独立 `solver/nonogram` 生成行列候选并约束传播，最终只提交需要填充的格子。
+- 自动连线：使用独立 `solver/flowfree` 为每种颜色搜索端点路径，按颜色提交连线路径。
 - 自动记忆翻牌：记录已知卡牌，优先消除已知对子，避免刚失败的组合。
 - 自动华容道：校验可解性并使用搜索结果按步提交移动。
 - 自动数独：求解完整棋盘，提交空格或可编辑错误格。
@@ -140,6 +146,11 @@ var/
     scratch/<sanitized-email>.log
     sheepmatch/<sanitized-email>.log
     puzzle_2048/<sanitized-email>.log
+    sokoban/<sanitized-email>.log
+    lightsout/<sanitized-email>.log
+    maze/<sanitized-email>.log
+    nonogram/<sanitized-email>.log
+    flowfree/<sanitized-email>.log
     memory/<sanitized-email>.log
     puzzle_15/<sanitized-email>.log
     sudoku/<sanitized-email>.log
@@ -243,7 +254,7 @@ Windows 批量菜单 smoke：
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 ```
 
-默认 smoke 会构建并驱动 `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`，覆盖主要批量菜单路径。需要额外覆盖刮刮乐、记忆翻牌、华容道和数独独立入口时：
+默认 smoke 会构建并驱动 `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`，覆盖主要批量菜单路径。需要额外覆盖刮刮乐、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道和数独独立入口时：
 
 ```powershell
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false -SkipMemory:$false -SkipPuzzle15:$false -SkipSudoku:$false
@@ -258,7 +269,7 @@ hdd-autopilot/
     cli/         CLI 菜单、账号添加、功能入口
     model/       API DTO 和难度/玩法常量
     runtime/     var/dist/artifacts 路径解析和旧数据迁移
-    solver/      2048、记忆翻牌、华容道、数独求解器
+    solver/      2048、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独求解器
     storage/     账号缓存读写、归一化和旧格式兼容
     ui/          终端日志视图、滚动、ESC 中断
     workflows/   签到、刮刮乐、各自动玩法和全自动调度

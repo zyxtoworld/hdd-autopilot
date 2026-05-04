@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -11,7 +11,7 @@ use crate::solver::puzzle_2048::{self, DEFAULT_DIRECTIONS, Direction};
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
+    retry_operation_with_step, with_auth_retry_api_until_success,
 };
 
 use super::types::{PuzzleDifficultySummary, PuzzleRoundSummary, PuzzleSnapshot, RoundProgress};
@@ -54,25 +54,6 @@ pub(super) fn is_pending_item(item: &Puzzle2048HistoryItem) -> bool {
     }
     let status = item.status.trim().to_ascii_lowercase();
     status.is_empty() || matches!(status.as_str(), "pending" | "running" | "active")
-}
-
-pub(super) fn started_today(started_at_ms: i64, server_now_ms: i64) -> bool {
-    same_beijing_day(started_at_ms, server_now_ms)
-}
-
-pub(super) fn used_today_by_difficulty(
-    history: &crate::model::Puzzle2048HistoryResponse,
-) -> HashMap<String, i32> {
-    let mut used = HashMap::new();
-    for item in &history.items {
-        if item.difficulty.trim().is_empty()
-            || !started_today(item.started_at_ms, history.server_now_ms)
-        {
-            continue;
-        }
-        *used.entry(item.difficulty.clone()).or_insert(0) += 1;
-    }
-    used
 }
 
 pub(super) fn play_round(
@@ -393,18 +374,6 @@ pub(super) fn merge_round_into_summary(
     }
 }
 
-pub(super) fn remaining_for_difficulty(
-    config: &Puzzle2048ConfigResponse,
-    difficulty: &str,
-    used_today: i32,
-) -> i32 {
-    config
-        .difficulties
-        .get(difficulty)
-        .map(|item| (item.daily_plays - used_today).max(0))
-        .unwrap_or(0)
-}
-
 pub(super) fn normalize_round_total(current: i32, total: i32) -> i32 {
     total.max(current.max(1))
 }
@@ -529,7 +498,7 @@ pub(super) fn is_active_session_error(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Puzzle2048DifficultyConfig, Puzzle2048HistoryResponse};
+    use crate::model::Puzzle2048DifficultyConfig;
 
     #[test]
     fn pending_item_requires_active_status_and_board() {
@@ -564,27 +533,6 @@ mod tests {
         );
 
         assert_eq!(difficulty_order(&config), vec!["mini", "jumbo", "zzz"]);
-    }
-
-    #[test]
-    fn used_today_counts_only_current_day() {
-        let history = Puzzle2048HistoryResponse {
-            server_now_ms: 86_400_000 * 10 + 100,
-            items: vec![
-                Puzzle2048HistoryItem {
-                    difficulty: "mini".to_string(),
-                    started_at_ms: 86_400_000 * 10 + 50,
-                    ..Puzzle2048HistoryItem::default()
-                },
-                Puzzle2048HistoryItem {
-                    difficulty: "mini".to_string(),
-                    started_at_ms: 86_400_000 * 9 + 50,
-                    ..Puzzle2048HistoryItem::default()
-                },
-            ],
-        };
-
-        assert_eq!(used_today_by_difficulty(&history)["mini"], 1);
     }
 
     #[test]

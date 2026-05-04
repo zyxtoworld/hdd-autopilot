@@ -1,17 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::model::{
-    Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MoveResponse, Puzzle15Session,
-    Puzzle15StartResponse,
+    Puzzle15ConfigResponse, Puzzle15MoveResponse, Puzzle15Session, Puzzle15StartResponse,
 };
 use crate::solver::puzzle_15;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, same_beijing_day, with_auth_retry_api_until_success,
+    retry_operation_with_step, with_auth_retry_api_until_success,
 };
 
 use super::types::{
@@ -43,35 +42,6 @@ pub(super) fn is_pending_session(session: &Puzzle15Session) -> bool {
     }
     let status = session.status.trim().to_ascii_lowercase();
     status.is_empty() || matches!(status.as_str(), "pending" | "running" | "active")
-}
-
-pub(super) fn started_today(started_at_ms: i64, server_now_ms: i64) -> bool {
-    same_beijing_day(started_at_ms, server_now_ms)
-}
-
-pub(super) fn used_today_by_difficulty(history: &Puzzle15HistoryResponse) -> HashMap<String, i32> {
-    let mut used = HashMap::new();
-    for item in &history.items {
-        if item.difficulty.trim().is_empty()
-            || !started_today(item.started_at_ms, history.server_now_ms)
-        {
-            continue;
-        }
-        *used.entry(item.difficulty.clone()).or_insert(0) += 1;
-    }
-    used
-}
-
-pub(super) fn remaining_for_difficulty(
-    config: &Puzzle15ConfigResponse,
-    difficulty: &str,
-    used_today: i32,
-) -> i32 {
-    config
-        .difficulties
-        .get(difficulty)
-        .map(|item| (item.daily_plays - used_today).max(0))
-        .unwrap_or(0)
 }
 
 pub(super) fn normalize_round_total(current: i32, total: i32) -> i32 {
@@ -366,27 +336,6 @@ mod tests {
         );
 
         assert_eq!(difficulty_order(&config), vec!["easy", "hard", "zzz"]);
-    }
-
-    #[test]
-    fn used_today_counts_only_current_day() {
-        let history = Puzzle15HistoryResponse {
-            server_now_ms: 86_400_000 * 10 + 100,
-            items: vec![
-                Puzzle15Session {
-                    difficulty: "easy".to_string(),
-                    started_at_ms: 86_400_000 * 10 + 50,
-                    ..Puzzle15Session::default()
-                },
-                Puzzle15Session {
-                    difficulty: "easy".to_string(),
-                    started_at_ms: 86_400_000 * 9 + 50,
-                    ..Puzzle15Session::default()
-                },
-            ],
-        };
-
-        assert_eq!(used_today_by_difficulty(&history)["easy"], 1);
     }
 
     #[test]

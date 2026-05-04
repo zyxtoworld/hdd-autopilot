@@ -3,15 +3,32 @@ use reqwest::StatusCode;
 use super::{
     AUTH_ME_PATH, ApiErrorBody, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
     LOGIN_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH, MEMORY_HISTORY_PATH, MEMORY_ME_PATH,
-    MEMORY_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH,
-    PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
-    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH,
-    SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH,
-    SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH,
-    TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH,
+    MEMORY_START_PATH, MINESWEEPER_CLICK_PATH, MINESWEEPER_CONFIG_PATH, MINESWEEPER_HISTORY_PATH,
+    MINESWEEPER_ME_PATH, MINESWEEPER_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH,
+    PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH,
+    PUZZLE_2048_CONFIG_PATH, PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH,
+    PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH,
+    SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH,
+    TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH,
+    TILE_STEP_PATH,
 };
 
 pub(super) fn api_label_for_path(path: &str) -> &'static str {
+    if path.starts_with("/sokoban-api/") {
+        return "推箱子接口";
+    }
+    if path.starts_with("/lightsout-api/") {
+        return "点灯接口";
+    }
+    if path.starts_with("/maze-api/") {
+        return "迷宫接口";
+    }
+    if path.starts_with("/nonogram-api/") {
+        return "数织接口";
+    }
+    if path.starts_with("/flowfree-api/") {
+        return "连线接口";
+    }
     match path {
         CHECKIN_ME_PATH | CHECKIN_TODAY_PATH | CHECKIN_CLAIM_PATH => "签到接口",
         SCRATCH_PLAY_PATH | SCRATCH_REVEAL_PATH | SCRATCH_HISTORY_PATH => "刮刮乐接口",
@@ -25,6 +42,11 @@ pub(super) fn api_label_for_path(path: &str) -> &'static str {
         | PUZZLE_2048_ABANDON_PATH => "谜题2048接口",
         MEMORY_CONFIG_PATH | MEMORY_HISTORY_PATH | MEMORY_ME_PATH | MEMORY_START_PATH
         | MEMORY_FLIP_PATH => "记忆翻牌接口",
+        MINESWEEPER_CONFIG_PATH
+        | MINESWEEPER_HISTORY_PATH
+        | MINESWEEPER_ME_PATH
+        | MINESWEEPER_START_PATH
+        | MINESWEEPER_CLICK_PATH => "扫雷接口",
         PUZZLE_15_CONFIG_PATH
         | PUZZLE_15_HISTORY_PATH
         | PUZZLE_15_ME_PATH
@@ -181,8 +203,8 @@ fn contains_ascii_alpha(text: &str) -> bool {
 mod tests {
     use super::*;
     use crate::api::{
-        MEMORY_FLIP_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_2048_MOVE_PATH, SCRATCH_PLAY_PATH,
-        SUDOKU_FILL_PATH, TILE_STEP_PATH,
+        MEMORY_FLIP_PATH, MINESWEEPER_CLICK_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_2048_MOVE_PATH,
+        SCRATCH_PLAY_PATH, SUDOKU_FILL_PATH, TILE_STEP_PATH,
     };
 
     #[test]
@@ -191,6 +213,7 @@ mod tests {
         assert_eq!(api_label_for_path(TILE_STEP_PATH), "羊了个羊接口");
         assert_eq!(api_label_for_path(PUZZLE_2048_MOVE_PATH), "谜题2048接口");
         assert_eq!(api_label_for_path(MEMORY_FLIP_PATH), "记忆翻牌接口");
+        assert_eq!(api_label_for_path(MINESWEEPER_CLICK_PATH), "扫雷接口");
         assert_eq!(api_label_for_path(PUZZLE_15_MOVE_PATH), "华容道接口");
         assert_eq!(api_label_for_path(SUDOKU_FILL_PATH), "数独接口");
     }

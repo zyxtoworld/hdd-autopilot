@@ -1,7 +1,4 @@
-use crate::model::{
-    Puzzle2048ConfigResponse, Puzzle2048DifficultyConfig, Puzzle2048HistoryItem,
-    Puzzle2048HistoryResponse,
-};
+use crate::model::{Puzzle2048ConfigResponse, Puzzle2048DifficultyConfig, Puzzle2048HistoryItem};
 
 use super::round;
 
@@ -20,34 +17,6 @@ fn detects_pending_sessions_from_history() {
 
     assert!(round::is_pending_item(&item));
     assert!(!round::is_pending_item(&game_over));
-}
-
-#[test]
-fn counts_today_played_rounds_by_difficulty() {
-    let history = Puzzle2048HistoryResponse {
-        server_now_ms: 86_400_000 * 20 + 1_000,
-        items: vec![
-            Puzzle2048HistoryItem {
-                difficulty: "mini".to_string(),
-                started_at_ms: 86_400_000 * 20 + 500,
-                ..Puzzle2048HistoryItem::default()
-            },
-            Puzzle2048HistoryItem {
-                difficulty: "classic".to_string(),
-                started_at_ms: 86_400_000 * 20 + 600,
-                ..Puzzle2048HistoryItem::default()
-            },
-            Puzzle2048HistoryItem {
-                difficulty: "mini".to_string(),
-                started_at_ms: 86_400_000 * 19 + 500,
-                ..Puzzle2048HistoryItem::default()
-            },
-        ],
-    };
-    let used = round::used_today_by_difficulty(&history);
-
-    assert_eq!(used["mini"], 1);
-    assert_eq!(used["classic"], 1);
 }
 
 #[test]

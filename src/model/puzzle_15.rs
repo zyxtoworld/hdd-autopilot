@@ -101,6 +101,8 @@ pub struct Puzzle15StartResponse {
     #[serde(default)]
     pub board: Vec<i32>,
     #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
     pub difficulty: String,
     #[serde(default)]
     pub ok: bool,

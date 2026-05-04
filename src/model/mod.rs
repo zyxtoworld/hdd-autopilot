@@ -8,7 +8,9 @@ pub(crate) fn is_false(value: &bool) -> bool {
 
 mod auth;
 mod checkin;
+mod logic_games;
 mod memory;
+mod minesweeper;
 mod puzzle_15;
 mod puzzle_2048;
 mod scratch;
@@ -22,11 +24,24 @@ pub use auth::{
 pub use checkin::{
     CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse, CheckinUser,
 };
+pub use logic_games::{
+    LogicEdge, LogicEndpoint, LogicGameActionResponse, LogicGameConfigResponse,
+    LogicGameDifficultyConfig, LogicGameHistoryResponse, LogicGameKind, LogicGameMeResponse,
+    LogicGameSession, LogicGameStartRequest, LogicGameStartResponse, LogicGameStep, LogicGameUser,
+    LogicPath, LogicPoint,
+};
 pub use memory::{
     MEMORY_DIFFICULTY_EASY, MEMORY_DIFFICULTY_HARD, MEMORY_DIFFICULTY_HELL,
     MEMORY_DIFFICULTY_NORMAL, MEMORY_DIFFICULTY_ORDER, MemoryCard, MemoryConfigResponse,
     MemoryDifficultyConfig, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
     MemoryMeResponse, MemorySession, MemoryStartRequest, MemoryStartResponse,
+};
+pub use minesweeper::{
+    MINESWEEPER_DIFFICULTY_BEGINNER, MINESWEEPER_DIFFICULTY_EXPERT,
+    MINESWEEPER_DIFFICULTY_INTERMEDIATE, MINESWEEPER_DIFFICULTY_ORDER, MinesweeperClickDelta,
+    MinesweeperClickRequest, MinesweeperClickResponse, MinesweeperConfigResponse,
+    MinesweeperDifficultyConfig, MinesweeperHistoryResponse, MinesweeperMeResponse,
+    MinesweeperSession, MinesweeperStartRequest, MinesweeperStartResponse, MinesweeperUser,
 };
 pub use puzzle_15::{
     PUZZLE_15_DIFFICULTY_CLASSIC, PUZZLE_15_DIFFICULTY_EASY, PUZZLE_15_DIFFICULTY_HARD,

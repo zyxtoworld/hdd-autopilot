@@ -1,9 +1,16 @@
 pub mod checkin;
 pub(crate) mod common;
+pub mod flowfree;
 pub mod free_play;
+pub mod lightsout;
+pub(crate) mod logic_game_common;
+pub mod maze;
 pub mod memory;
+pub mod minesweeper;
+pub mod nonogram;
 pub mod puzzle_15;
 pub mod puzzle_2048;
 pub mod scratch;
 pub mod sheepmatch;
+pub mod sokoban;
 pub mod sudoku;

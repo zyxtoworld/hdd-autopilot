@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::Command;
 
 struct WindowsOpenclPaths {
     include_dir: PathBuf,
@@ -64,6 +65,7 @@ fn main() {
     }
 
     let windows_opencl_paths = if target_os == "windows" {
+        prepare_windows_build_environment();
         find_windows_opencl_paths()
     } else {
         None
@@ -111,6 +113,9 @@ fn build_native(
             config.define("OpenCL_INCLUDE_DIR", &paths.include_dir);
             config.define("OpenCL_LIBRARY", &paths.library_file);
         }
+        if let Some(make_program) = std::env::var_os("CMAKE_MAKE_PROGRAM") {
+            config.define("CMAKE_MAKE_PROGRAM", PathBuf::from(make_program));
+        }
         config.build_target("mining_opencl_core");
         config.build()
     })
@@ -129,6 +134,31 @@ where
 
 fn warn_native_disabled(reason: &str) {
     println!("cargo:warning=OpenCL native backend disabled: {reason}");
+}
+
+fn prepare_windows_build_environment() {
+    if let Some(vs_env) = load_vs_dev_env() {
+        for (key, value) in vs_env {
+            set_env_var(key, value);
+        }
+    }
+    if let Some(cmake_path) = find_visual_studio_cmake() {
+        set_env_var("CMAKE", cmake_path);
+    }
+    if let Some(path) = find_visual_studio_ninja() {
+        set_env_var("CMAKE_GENERATOR", "Ninja");
+        set_env_var("CMAKE_MAKE_PROGRAM", path);
+    }
+}
+
+fn set_env_var<K, V>(key: K, value: V)
+where
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    unsafe {
+        std::env::set_var(key, value);
+    }
 }
 
 fn host_is_macos() -> bool {
@@ -205,4 +235,89 @@ fn find_windows_opencl_paths() -> Option<WindowsOpenclPaths> {
             None
         }
     })
+}
+
+fn load_vs_dev_env() -> Option<Vec<(String, String)>> {
+    let install = find_vs_installation()?;
+    let vsdevcmd = install.join("Common7").join("Tools").join("VsDevCmd.bat");
+    if !vsdevcmd.is_file() {
+        return None;
+    }
+    let command = format!(
+        "call \"{}\" -arch=x64 -host_arch=x64 >nul && set",
+        vsdevcmd.display()
+    );
+    let output = Command::new("cmd")
+        .arg("/d")
+        .arg("/c")
+        .arg(command)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let vars = text
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
+        .collect::<Vec<_>>();
+    if vars.is_empty() { None } else { Some(vars) }
+}
+
+fn find_visual_studio_cmake() -> Option<PathBuf> {
+    let install = find_vs_installation()?;
+    let path = install
+        .join("Common7")
+        .join("IDE")
+        .join("CommonExtensions")
+        .join("Microsoft")
+        .join("CMake")
+        .join("CMake")
+        .join("bin")
+        .join("cmake.exe");
+    path.is_file().then_some(path)
+}
+
+fn find_visual_studio_ninja() -> Option<PathBuf> {
+    let install = find_vs_installation()?;
+    let path = install
+        .join("Common7")
+        .join("IDE")
+        .join("CommonExtensions")
+        .join("Microsoft")
+        .join("CMake")
+        .join("Ninja")
+        .join("ninja.exe");
+    path.is_file().then_some(path)
+}
+
+fn find_vs_installation() -> Option<PathBuf> {
+    let vswhere =
+        PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
+    if !vswhere.is_file() {
+        return None;
+    }
+    let output = Command::new(vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let install = String::from_utf8(output.stdout).ok()?;
+    let trimmed = install.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
 }

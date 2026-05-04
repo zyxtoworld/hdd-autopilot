@@ -125,6 +125,8 @@ pub struct MemoryStartResponse {
     #[serde(default)]
     pub cols: i32,
     #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
     pub difficulty: String,
     #[serde(default)]
     pub ok: bool,

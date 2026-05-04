@@ -7,10 +7,7 @@ use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::model::{
-    AuthCache, AuthConfig, Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MeResponse,
-    Puzzle15StartResponse,
-};
+use crate::model::{AuthCache, AuthConfig, Puzzle15MeResponse, Puzzle15StartResponse};
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
 use crate::workflows::common::{
@@ -25,8 +22,8 @@ use self::log::{
 };
 use self::round::{
     difficulty_order, is_active_session_error, is_daily_limit_error, is_pending_session,
-    merge_round_into_summary, normalize_round_total, play_round, remaining_for_difficulty,
-    snapshot_from_history_item, snapshot_from_start_response, used_today_by_difficulty,
+    merge_round_into_summary, normalize_round_total, play_round, snapshot_from_history_item,
+    snapshot_from_start_response,
 };
 use self::types::{Puzzle15DifficultySummary, Puzzle15RoundSummary, RoundProgress};
 
@@ -201,7 +198,7 @@ fn run_account(
 
     let me = fetch_me(cancel_flag, state, runtime)?;
     let mut used_today = me.daily_plays_used.clone();
-    let drained = drain_pending_session(cancel_flag, state, runtime, &config, &me)?;
+    let drained = drain_pending_session(cancel_flag, state, runtime, &me)?;
     for result in &drained {
         merge_round_into_cache(progress_cache, runtime.email(), result);
     }
@@ -219,12 +216,11 @@ fn run_account(
                     ..Puzzle15DifficultySummary::default()
                 });
         let used = *used_today.get(&difficulty).unwrap_or(&0);
-        let remaining = remaining_from_me(&config, &me, &difficulty, used);
+        let remaining = remaining_from_me(&me, &difficulty);
         summary = run_difficulty(
             cancel_flag,
             state,
             runtime,
-            &config,
             DifficultyRunPlan {
                 difficulty: difficulty.clone(),
                 summary,
@@ -269,7 +265,6 @@ fn drain_pending_session(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    config: &Puzzle15ConfigResponse,
     me: &Puzzle15MeResponse,
 ) -> io::Result<Vec<Puzzle15RoundSummary>> {
     let mut rounds = Vec::new();
@@ -280,7 +275,7 @@ fn drain_pending_session(
     {
         ui::check_cancel(cancel_flag)?;
         let used = *me.daily_plays_used.get(&item.difficulty).unwrap_or(&0);
-        let remaining = remaining_from_me(config, me, &item.difficulty, used);
+        let remaining = remaining_from_me(me, &item.difficulty);
         let progress = RoundProgress {
             current: used.max(1),
             total: normalize_round_total(used.max(1), used + remaining),
@@ -321,7 +316,6 @@ fn run_difficulty(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    config: &Puzzle15ConfigResponse,
     plan: DifficultyRunPlan,
     used_today: &mut HashMap<String, i32>,
     progress_cache: &mut AccountProgressCache,
@@ -374,10 +368,8 @@ fn run_difficulty(
                 }
                 Err(error) if is_new_round_unavailable_error(&error.to_string()) => {
                     let refreshed = fetch_me(cancel_flag, state, runtime)?;
-                    let refreshed_used = *refreshed.daily_plays_used.get(difficulty).unwrap_or(&0);
-                    current_remaining =
-                        remaining_from_me(config, &refreshed, difficulty, refreshed_used);
-                    used_today.insert(difficulty.to_string(), refreshed_used);
+                    *used_today = refreshed.daily_plays_used.clone();
+                    current_remaining = remaining_from_me(&refreshed, difficulty);
                     summary.remaining_after = current_remaining;
                     if current_remaining <= 0 {
                         summary.when_unix_ms = current_unix_ms();
@@ -396,8 +388,7 @@ fn run_difficulty(
                             item.session_id,
                         ));
                         let pending_used = *used_today.get(&item.difficulty).unwrap_or(&0);
-                        let pending_remaining =
-                            remaining_for_difficulty(config, &item.difficulty, pending_used);
+                        let pending_remaining = remaining_from_me(&refreshed, &item.difficulty);
                         let pending_progress = RoundProgress {
                             current: pending_used.max(1),
                             total: normalize_round_total(
@@ -434,12 +425,12 @@ fn run_difficulty(
                     )));
                 }
                 Err(error) if is_active_session_error(&error.to_string()) => {
-                    let history = fetch_history(cancel_flag, state, runtime)?;
-                    *used_today = used_today_by_difficulty(&history);
-                    let Some(item) = history
-                        .items
-                        .iter()
-                        .find(|item| is_pending_session(item))
+                    let refreshed = fetch_me(cancel_flag, state, runtime)?;
+                    *used_today = refreshed.daily_plays_used.clone();
+                    let Some(item) = refreshed
+                        .active_session
+                        .as_ref()
+                        .filter(|item| is_pending_session(item))
                         .cloned()
                     else {
                         return Err(error);
@@ -451,8 +442,7 @@ fn run_difficulty(
                         item.session_id,
                     ));
                     let pending_used = *used_today.get(&item.difficulty).unwrap_or(&0);
-                    let pending_remaining =
-                        remaining_for_difficulty(config, &item.difficulty, pending_used);
+                    let pending_remaining = remaining_from_me(&refreshed, &item.difficulty);
                     let pending_progress = RoundProgress {
                         current: pending_used.max(1),
                         total: normalize_round_total(
@@ -484,7 +474,11 @@ fn run_difficulty(
                 Err(error) => return Err(error),
             }
         };
-        current_remaining = current_remaining.saturating_sub(1);
+        current_remaining = start
+            .daily_plays_remaining
+            .get(difficulty)
+            .copied()
+            .unwrap_or_else(|| current_remaining.saturating_sub(1));
         let mut result = play_round(
             cancel_flag,
             state,
@@ -528,20 +522,6 @@ fn start_new_round(
     }
 }
 
-fn fetch_history(
-    cancel_flag: &ui::CancelFlag,
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
-) -> io::Result<Puzzle15HistoryResponse> {
-    with_auth_retry_api_until_success(
-        cancel_flag,
-        state,
-        runtime,
-        "puzzle15 history",
-        |client, auth_token| client.get_puzzle_15_history(auth_token),
-    )
-}
-
 fn fetch_me(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
@@ -556,16 +536,11 @@ fn fetch_me(
     )
 }
 
-fn remaining_from_me(
-    config: &Puzzle15ConfigResponse,
-    me: &Puzzle15MeResponse,
-    difficulty: &str,
-    used_today: i32,
-) -> i32 {
+fn remaining_from_me(me: &Puzzle15MeResponse, difficulty: &str) -> i32 {
     me.daily_plays_remaining
         .get(difficulty)
         .copied()
-        .unwrap_or_else(|| remaining_for_difficulty(config, difficulty, used_today))
+        .unwrap_or(0)
         .max(0)
 }
 

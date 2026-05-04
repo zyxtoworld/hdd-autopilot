@@ -1,6 +1,7 @@
 #include "kernelloader.h"
 
 #include <iostream>
+#include <sstream>
 
 #include "app/embedded_kernel.hpp"
 

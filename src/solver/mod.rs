@@ -1,7 +1,13 @@
+pub mod flowfree;
+pub mod lightsout;
+pub mod maze;
 pub mod memory;
+pub mod minesweeper;
+pub mod nonogram;
 pub mod puzzle_15;
 pub mod puzzle_2048;
 mod search;
+pub mod sokoban;
 pub mod sudoku;
 
 use std::collections::HashSet;

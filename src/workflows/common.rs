@@ -171,6 +171,7 @@ pub(crate) fn beijing_time(when_unix_ms: i64) -> chrono::DateTime<FixedOffset> {
         .with_timezone(&FixedOffset::east_opt(8 * 60 * 60).unwrap())
 }
 
+#[cfg(test)]
 pub(crate) fn same_beijing_day(left_unix_ms: i64, right_unix_ms: i64) -> bool {
     if left_unix_ms <= 0 || right_unix_ms <= 0 {
         return false;
@@ -228,7 +229,12 @@ pub(crate) fn round_mode_label(continued: bool) -> &'static str {
 }
 
 pub(crate) fn round_progress_label(current: i32, total: i32) -> String {
-    format!("今天第 {}/{} 局", current.max(1), total.max(current.max(1)))
+    let current = current.max(1);
+    if total <= 0 {
+        format!("今天第 {} 局", current)
+    } else {
+        format!("今天第 {}/{} 局", current, total.max(current))
+    }
 }
 
 pub(crate) fn reason_clause(error_message: &str) -> String {
@@ -563,6 +569,11 @@ fn localized_retry_operation(operation: &str) -> &'static str {
         "memory history" => "记忆翻牌历史接口",
         "memory start" => "记忆翻牌开局接口",
         "memory flip" => "记忆翻牌翻牌接口",
+        "minesweeper config" => "扫雷配置接口",
+        "minesweeper me" => "扫雷次数查询接口",
+        "minesweeper history" => "扫雷历史接口",
+        "minesweeper start" => "扫雷开局接口",
+        "minesweeper click" => "扫雷点击接口",
         "puzzle15 config" => "华容道配置接口",
         "puzzle15 me" => "华容道次数查询接口",
         "puzzle15 history" => "华容道历史接口",

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::api::ApiClient;
 use crate::model::{
-    AccountRunSummary, AuthCache, AuthConfig, ConfigResponse, DIFFICULTY_ORDER, HistoryResponse,
+    AccountRunSummary, AuthCache, AuthConfig, ConfigResponse, DIFFICULTY_ORDER, HistoryItem,
     RoundResultSummary,
 };
 use crate::runtime::resolve_data_file_path;
@@ -263,14 +263,13 @@ fn run_account(
     )?;
     let mut used_today_by_difficulty = me.daily_plays_used.clone();
     let mut remaining_by_difficulty = me.daily_plays_remaining.clone();
-    let history = fetch_history(cancel_flag, state, runtime)?;
 
     let drained_rounds = drain_pending_sessions(
         cancel_flag,
         state,
         runtime,
         &config,
-        &history,
+        me.active_session.as_ref(),
         &used_today_by_difficulty,
         &remaining_by_difficulty,
     )?;
@@ -355,16 +354,15 @@ fn drain_pending_sessions(
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     config: &ConfigResponse,
-    history: &HistoryResponse,
+    active_session: Option<&HistoryItem>,
     used_today_by_difficulty: &HashMap<String, i32>,
     remaining_by_difficulty: &HashMap<String, i32>,
 ) -> io::Result<Vec<RoundResultSummary>> {
     ui::check_cancel(cancel_flag)?;
     let mut rounds = Vec::new();
-    for item in history.items.clone() {
-        if !item.status.trim().eq_ignore_ascii_case("pending") {
-            continue;
-        }
+    if let Some(item) =
+        active_session.filter(|item| item.status.trim().eq_ignore_ascii_case("pending"))
+    {
         ui::check_cancel(cancel_flag)?;
         let round_index = next_round_index_for_new_round(
             *used_today_by_difficulty.get(&item.difficulty).unwrap_or(&0),
@@ -383,7 +381,7 @@ fn drain_pending_sessions(
             format_round_progress(round_index, round_total),
             item.session_id,
         ));
-        let start = history_item_to_start_response(&item);
+        let start = history_item_to_start_response(item);
         let remaining_after = *remaining_by_difficulty.get(&item.difficulty).unwrap_or(&0);
         let result = play_round(
             cancel_flag,
@@ -405,20 +403,6 @@ fn drain_pending_sessions(
         rounds.push(result);
     }
     Ok(rounds)
-}
-
-fn fetch_history(
-    cancel_flag: &ui::CancelFlag,
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
-) -> io::Result<HistoryResponse> {
-    with_auth_retry_until_success(
-        cancel_flag,
-        state,
-        runtime,
-        "tile history",
-        |client, auth_token| client.get_tile_history(auth_token),
-    )
 }
 
 fn merge_round_into_cache(

@@ -103,6 +103,8 @@ pub struct SudokuStartResponse {
     #[serde(default)]
     pub conflicts: Vec<serde_json::Value>,
     #[serde(default)]
+    pub daily_plays_remaining: HashMap<String, i32>,
+    #[serde(default)]
     pub difficulty: String,
     #[serde(default)]
     pub givens: Vec<i32>,

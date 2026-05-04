@@ -7,7 +7,10 @@ use crate::model::{AuthCache, AuthConfig, CheckinResult};
 use crate::storage::upsert_account;
 use crate::ui;
 use crate::workflows::common::{AccountRewardSummary, print_account_reward_summary};
-use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, sheepmatch, sudoku};
+use crate::workflows::{
+    checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15, puzzle_2048,
+    sheepmatch, sokoban, sudoku,
+};
 
 const FEATURE_RETRY_BACKOFF: Duration = Duration::ZERO;
 
@@ -25,8 +28,38 @@ pub(crate) type SheepmatchRunner = Arc<
         + Send
         + Sync,
 >;
+pub(crate) type MinesweeperRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<minesweeper::AccountRunOutput>
+        + Send
+        + Sync,
+>;
 pub(crate) type Puzzle2048Runner = Arc<
     dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<puzzle_2048::AccountRunOutput>
+        + Send
+        + Sync,
+>;
+pub(crate) type SokobanRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<sokoban::AccountRunOutput>
+        + Send
+        + Sync,
+>;
+pub(crate) type LightsoutRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<lightsout::AccountRunOutput>
+        + Send
+        + Sync,
+>;
+pub(crate) type MazeRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<maze::AccountRunOutput>
+        + Send
+        + Sync,
+>;
+pub(crate) type NonogramRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<nonogram::AccountRunOutput>
+        + Send
+        + Sync,
+>;
+pub(crate) type FlowfreeRunner = Arc<
+    dyn Fn(&AuthConfig, AuthCache, &ui::CancelFlag) -> io::Result<flowfree::AccountRunOutput>
         + Send
         + Sync,
 >;
@@ -49,8 +82,14 @@ pub(crate) type SaveMergedConfig = Box<dyn Fn(AuthConfig) -> io::Result<()> + Se
 
 pub(crate) struct FreeFeatureRunners {
     pub(crate) run_checkin: CheckinRunner,
+    pub(crate) run_minesweeper: MinesweeperRunner,
     pub(crate) run_sheepmatch: SheepmatchRunner,
     pub(crate) run_puzzle_2048: Puzzle2048Runner,
+    pub(crate) run_sokoban: SokobanRunner,
+    pub(crate) run_lightsout: LightsoutRunner,
+    pub(crate) run_maze: MazeRunner,
+    pub(crate) run_nonogram: NonogramRunner,
+    pub(crate) run_flowfree: FlowfreeRunner,
     pub(crate) run_memory: MemoryRunner,
     pub(crate) run_puzzle_15: Puzzle15Runner,
     pub(crate) run_sudoku: SudokuRunner,
@@ -120,8 +159,14 @@ pub(crate) fn execute_all_free_features(
 
     enum FeatureProgress {
         Checkin(Option<checkin::AccountCheckinOutput>),
+        Minesweeper(minesweeper::AccountRunOutput),
         Sheepmatch(sheepmatch::AccountRunOutput),
         Puzzle2048(puzzle_2048::AccountRunOutput),
+        Sokoban(sokoban::AccountRunOutput),
+        Lightsout(lightsout::AccountRunOutput),
+        Maze(maze::AccountRunOutput),
+        Nonogram(nonogram::AccountRunOutput),
+        Flowfree(flowfree::AccountRunOutput),
         Memory(memory::AccountRunOutput),
         Puzzle15(puzzle_15::AccountRunOutput),
         Sudoku(sudoku::AccountRunOutput),
@@ -129,8 +174,14 @@ pub(crate) fn execute_all_free_features(
 
     let FreeFeatureRunners {
         run_checkin,
+        run_minesweeper,
         run_sheepmatch,
         run_puzzle_2048,
+        run_sokoban,
+        run_lightsout,
+        run_maze,
+        run_nonogram,
+        run_flowfree,
         run_memory,
         run_puzzle_15,
         run_sudoku,
@@ -155,8 +206,14 @@ pub(crate) fn execute_all_free_features(
         let cancel_flag = Arc::clone(cancel_flag);
         let base_config = original_config.clone();
         let run_checkin = Arc::clone(&run_checkin);
+        let run_minesweeper = Arc::clone(&run_minesweeper);
         let run_sheepmatch = Arc::clone(&run_sheepmatch);
         let run_puzzle_2048 = Arc::clone(&run_puzzle_2048);
+        let run_sokoban = Arc::clone(&run_sokoban);
+        let run_lightsout = Arc::clone(&run_lightsout);
+        let run_maze = Arc::clone(&run_maze);
+        let run_nonogram = Arc::clone(&run_nonogram);
+        let run_flowfree = Arc::clone(&run_flowfree);
         let run_memory = Arc::clone(&run_memory);
         let run_puzzle_15 = Arc::clone(&run_puzzle_15);
         let run_sudoku = Arc::clone(&run_sudoku);
@@ -166,7 +223,7 @@ pub(crate) fn execute_all_free_features(
             let result: io::Result<AccountProgress> = {
                 let account_email = account.email.trim().to_string();
                 log.line_fmt(format_args!(
-                    "【全自动白嫖｜账号 {}】开始并发执行：自动签到、自动羊了个羊、自动谜题2048、自动记忆翻牌、自动华容道、自动数独。",
+                    "【全自动白嫖｜账号 {}】开始并发执行：自动签到、自动扫雷、自动羊了个羊、自动谜题2048、自动推箱子、自动点灯、自动迷宫、自动数织、自动连线、自动记忆翻牌、自动华容道、自动数独。",
                     account_email
                 ));
                 let account_config = AuthConfig {
@@ -185,6 +242,20 @@ pub(crate) fn execute_all_free_features(
                             run_feature_with_status(&cancel_flag, &log, &email, "自动签到", || {
                                 run_checkin(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Checkin)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_minesweeper = Arc::clone(&run_minesweeper);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动扫雷", || {
+                                run_minesweeper(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Minesweeper)
                             })
                         }
                     }),
@@ -213,6 +284,76 @@ pub(crate) fn execute_all_free_features(
                             run_feature_with_status(&cancel_flag, &log, &email, "自动谜题2048", || {
                                 run_puzzle_2048(&account_config, account.clone(), &cancel_flag)
                                     .map(FeatureProgress::Puzzle2048)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_sokoban = Arc::clone(&run_sokoban);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动推箱子", || {
+                                run_sokoban(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Sokoban)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_lightsout = Arc::clone(&run_lightsout);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动点灯", || {
+                                run_lightsout(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Lightsout)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_maze = Arc::clone(&run_maze);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动迷宫", || {
+                                run_maze(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Maze)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_nonogram = Arc::clone(&run_nonogram);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动数织", || {
+                                run_nonogram(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Nonogram)
+                            })
+                        }
+                    }),
+                    std::thread::spawn({
+                        let account_config = account_config.clone();
+                        let account = account.clone();
+                        let cancel_flag = Arc::clone(&cancel_flag);
+                        let run_flowfree = Arc::clone(&run_flowfree);
+                        let log = log.clone();
+                        let email = account_email.clone();
+                        move || {
+                            run_feature_with_status(&cancel_flag, &log, &email, "自动连线", || {
+                                run_flowfree(&account_config, account.clone(), &cancel_flag)
+                                    .map(FeatureProgress::Flowfree)
                             })
                         }
                     }),
@@ -273,11 +414,35 @@ pub(crate) fn execute_all_free_features(
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Checkin(None) => {}
+                            FeatureProgress::Minesweeper(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
                             FeatureProgress::Sheepmatch(output) => {
                                 total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
                             FeatureProgress::Puzzle2048(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
+                            FeatureProgress::Sokoban(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
+                            FeatureProgress::Lightsout(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
+                            FeatureProgress::Maze(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
+                            FeatureProgress::Nonogram(output) => {
+                                total_reward += output.total_reward;
+                                merged_config = upsert_account(merged_config, output.account);
+                            }
+                            FeatureProgress::Flowfree(output) => {
                                 total_reward += output.total_reward;
                                 merged_config = upsert_account(merged_config, output.account);
                             }
@@ -448,6 +613,23 @@ mod tests {
                         }))
                     }
                 }),
+                run_minesweeper: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("minesweeper:{}", account.email));
+                        let mut updated_account = account.clone();
+                        updated_account.access_token = "after-minesweeper".to_string();
+                        Ok(minesweeper::AccountRunOutput {
+                            account: updated_account,
+                            total_reward: 2.5,
+                        })
+                    }
+                }),
                 run_sheepmatch: Arc::new({
                     let events = Arc::clone(&events);
                     move |account_config, account, _cancel_flag| {
@@ -480,6 +662,81 @@ mod tests {
                         Ok(puzzle_2048::AccountRunOutput {
                             account: updated_account,
                             total_reward: 3.0,
+                        })
+                    }
+                }),
+                run_sokoban: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("sokoban:{}", account.email));
+                        Ok(sokoban::AccountRunOutput {
+                            account,
+                            total_reward: 0.3,
+                        })
+                    }
+                }),
+                run_lightsout: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("lightsout:{}", account.email));
+                        Ok(lightsout::AccountRunOutput {
+                            account,
+                            total_reward: 0.3,
+                        })
+                    }
+                }),
+                run_maze: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("maze:{}", account.email));
+                        Ok(maze::AccountRunOutput {
+                            account,
+                            total_reward: 0.3,
+                        })
+                    }
+                }),
+                run_nonogram: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("nonogram:{}", account.email));
+                        Ok(nonogram::AccountRunOutput {
+                            account,
+                            total_reward: 0.3,
+                        })
+                    }
+                }),
+                run_flowfree: Arc::new({
+                    let events = Arc::clone(&events);
+                    move |account_config, account, _cancel_flag| {
+                        assert_eq!(account_config.accounts.len(), 1);
+                        assert_eq!(account_config.accounts[0].email, account.email);
+                        events
+                            .lock()
+                            .unwrap()
+                            .push(format!("flowfree:{}", account.email));
+                        Ok(flowfree::AccountRunOutput {
+                            account,
+                            total_reward: 0.3,
                         })
                     }
                 }),
@@ -552,8 +809,14 @@ mod tests {
         for email in ["alpha@example.com", "beta@example.com"] {
             for feature in [
                 "checkin",
+                "minesweeper",
                 "sheepmatch",
                 "puzzle_2048",
+                "sokoban",
+                "lightsout",
+                "maze",
+                "nonogram",
+                "flowfree",
                 "memory",
                 "puzzle_15",
                 "sudoku",
@@ -630,6 +893,12 @@ mod tests {
                         }))
                     }
                 }),
+                run_minesweeper: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(minesweeper::AccountRunOutput {
+                        account,
+                        total_reward: 1.5,
+                    })
+                }),
                 run_sheepmatch: Arc::new({
                     let sheepmatch_started = Arc::clone(&sheepmatch_started);
                     move |_config, account, _cancel_flag| {
@@ -648,6 +917,36 @@ mod tests {
                     Ok(puzzle_2048::AccountRunOutput {
                         account,
                         total_reward: 3.0,
+                    })
+                }),
+                run_sokoban: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(sokoban::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_lightsout: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(lightsout::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_maze: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(maze::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_nonogram: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(nonogram::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_flowfree: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(flowfree::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
                     })
                 }),
                 run_memory: Arc::new(move |_config, account, _cancel_flag| {
@@ -688,6 +987,12 @@ mod tests {
             &log,
             FreeFeatureRunners {
                 run_checkin: Arc::new(move |_config, _account, _cancel_flag| Ok(None)),
+                run_minesweeper: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(minesweeper::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
                 run_sheepmatch: Arc::new({
                     let sheepmatch_calls = Arc::clone(&sheepmatch_calls);
                     move |_config, account, _cancel_flag| {
@@ -702,6 +1007,36 @@ mod tests {
                 }),
                 run_puzzle_2048: Arc::new(move |_config, account, _cancel_flag| {
                     Ok(puzzle_2048::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_sokoban: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(sokoban::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_lightsout: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(lightsout::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_maze: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(maze::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_nonogram: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(nonogram::AccountRunOutput {
+                        account,
+                        total_reward: 0.0,
+                    })
+                }),
+                run_flowfree: Arc::new(move |_config, account, _cancel_flag| {
+                    Ok(flowfree::AccountRunOutput {
                         account,
                         total_reward: 0.0,
                     })

@@ -7,7 +7,10 @@ use crate::storage::{cache_from_login, load_cache, save_cache, upsert_account};
 use crate::ui;
 use crate::workflows::common::format_amount;
 use crate::workflows::free_play::{FreeFeatureRunners, execute_all_free_features};
-use crate::workflows::{checkin, memory, puzzle_15, puzzle_2048, scratch, sheepmatch, sudoku};
+use crate::workflows::{
+    checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15, puzzle_2048,
+    scratch, sheepmatch, sokoban, sudoku,
+};
 use unicode_width::UnicodeWidthStr;
 
 use super::prompt::{prompt_choice, prompt_email, prompt_password};
@@ -128,32 +131,46 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
         let Ok(choice) = prompt_choice(
             &[
                 "1. 全自动运行所有白嫖玩法",
-                "2. 自动签到",
+                "2. 自动扫雷",
                 "3. 自动羊了个羊",
                 "4. 自动谜题2048",
-                "5. 自动记忆翻牌",
-                "6. 自动华容道",
-                "7. 自动数独",
-                "8. 返回上一级菜单",
-                "9. 退出脚本",
+                "5. 自动推箱子",
+                "6. 自动点灯",
+                "7. 自动迷宫",
+                "8. 自动数织",
+                "9. 自动连线",
+                "10. 自动记忆翻牌",
+                "11. 自动华容道",
+                "12. 自动数独",
+                "13. 自动签到",
+                "14. 返回上一级菜单",
+                "15. 退出脚本",
             ],
-            "请输入选项 (1/2/3/4/5/6/7/8/9): ",
-            &["1", "2", "3", "4", "5", "6", "7", "8", "9"],
-            "1、2、3、4、5、6、7、8 或 9",
-            Some("8"),
+            "请输入选项 (1/2/3/4/5/6/7/8/9/10/11/12/13/14/15): ",
+            &[
+                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+            ],
+            "1 到 15",
+            Some("14"),
         ) else {
             return false;
         };
         match choice.as_str() {
             "1" => run_all_free_features(config, auth_path),
-            "2" => run_checkin_feature(config, auth_path),
+            "2" => run_minesweeper_feature(config, auth_path),
             "3" => run_sheepmatch_feature(config, auth_path),
             "4" => run_puzzle_2048_feature(config, auth_path),
-            "5" => run_memory_feature(config, auth_path),
-            "6" => run_puzzle_15_feature(config, auth_path),
-            "7" => run_sudoku_feature(config, auth_path),
-            "8" => return false,
-            "9" => return true,
+            "5" => run_sokoban_feature(config, auth_path),
+            "6" => run_lightsout_feature(config, auth_path),
+            "7" => run_maze_feature(config, auth_path),
+            "8" => run_nonogram_feature(config, auth_path),
+            "9" => run_flowfree_feature(config, auth_path),
+            "10" => run_memory_feature(config, auth_path),
+            "11" => run_puzzle_15_feature(config, auth_path),
+            "12" => run_sudoku_feature(config, auth_path),
+            "13" => run_checkin_feature(config, auth_path),
+            "14" => return false,
+            "15" => return true,
             _ => {}
         }
     }
@@ -275,6 +292,162 @@ fn run_memory_feature(config: &mut AuthConfig, auth_path: &Path) {
     }
 }
 
+fn run_sokoban_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动推箱子，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(sokoban::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            sokoban::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动推箱子运行失败：{}", error),
+    }
+}
+
+fn run_lightsout_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动点灯，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(lightsout::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            lightsout::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动点灯运行失败：{}", error),
+    }
+}
+
+fn run_maze_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动迷宫，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(maze::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            maze::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动迷宫运行失败：{}", error),
+    }
+}
+
+fn run_nonogram_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动数织，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(nonogram::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            nonogram::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动数织运行失败：{}", error),
+    }
+}
+
+fn run_flowfree_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动连线，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(flowfree::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            flowfree::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动连线运行失败：{}", error),
+    }
+}
+
+fn run_minesweeper_feature(config: &mut AuthConfig, auth_path: &Path) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始自动扫雷，本次会处理 {} 个账号。",
+            original_config.accounts.len()
+        ),
+        Some(minesweeper::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            minesweeper::run_batch(original_config, &run_auth_path, &cancel_flag, &log)
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+        }
+        Ok(None) => {}
+        Err(error) => println!("自动扫雷运行失败：{}", error),
+    }
+}
+
 fn run_puzzle_15_feature(config: &mut AuthConfig, auth_path: &Path) {
     if config.accounts.is_empty() {
         println!("当前还没有可用账号。");
@@ -369,6 +542,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
         Some("全自动白嫖玩法已完成。"),
         move |cancel_flag, log| {
             let checkin_log = log.clone();
+            let minesweeper_log = log.clone();
             let sheepmatch_log = log.clone();
             execute_all_free_features(
                 original_config,
@@ -378,6 +552,15 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                     run_checkin: Arc::new(move |config, account, cancel_flag| {
                         let feature_log = feature_log(&checkin_log, "自动签到", &account.email);
                         checkin::run_account_with_log(config, account, cancel_flag, &feature_log)
+                    }),
+                    run_minesweeper: Arc::new(move |config, account, cancel_flag| {
+                        let feature_log = feature_log(&minesweeper_log, "自动扫雷", &account.email);
+                        minesweeper::run_account_for_free_play_with_log(
+                            config,
+                            account,
+                            cancel_flag,
+                            &feature_log,
+                        )
                     }),
                     run_sheepmatch: Arc::new(move |config, account, cancel_flag| {
                         let feature_log =
@@ -395,6 +578,70 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                             let feature_log =
                                 feature_log(&puzzle_2048_log, "自动谜题2048", &account.email);
                             puzzle_2048::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_sokoban: {
+                        let sokoban_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&sokoban_log, "自动推箱子", &account.email);
+                            sokoban::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_lightsout: {
+                        let lightsout_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&lightsout_log, "自动点灯", &account.email);
+                            lightsout::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_maze: {
+                        let maze_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log = feature_log(&maze_log, "自动迷宫", &account.email);
+                            maze::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_nonogram: {
+                        let nonogram_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&nonogram_log, "自动数织", &account.email);
+                            nonogram::run_account_for_free_play_with_log(
+                                config,
+                                account,
+                                cancel_flag,
+                                &feature_log,
+                            )
+                        })
+                    },
+                    run_flowfree: {
+                        let flowfree_log = log.clone();
+                        Arc::new(move |config, account, cancel_flag| {
+                            let feature_log =
+                                feature_log(&flowfree_log, "自动连线", &account.email);
+                            flowfree::run_account_for_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,

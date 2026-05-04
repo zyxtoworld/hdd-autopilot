@@ -2,876 +2,877 @@
 
 namespace app {
 
-inline constexpr char kArgon2KernelSource[] = R"OPENCL(
-/* C compatibility For dumb IDEs: */
-#ifndef __OPENCL_VERSION__
-#ifndef __cplusplus
-typedef int bool;
-#endif
-typedef unsigned char uchar;
-typedef unsigned short ushort;
-typedef unsigned int uint;
-typedef unsigned long ulong;
-typedef unsigned long size_t;
-typedef long ptrdiff_t;
-typedef size_t uintptr_t;
-typedef ptrdiff_t intptr_t;
-#ifndef __kernel
-#define __kernel
-#endif
-#ifndef __global
-#define __global
-#endif
-#ifndef __private
-#define __private
-#endif
-#ifndef __local
-#define __local
-#endif
-#ifndef __constant
-#define __constant const
-#endif
-#endif /* __OPENCL_VERSION__ */
-
-#define ARGON2_D  0
-#define ARGON2_I  1
-#define ARGON2_ID 2
-
-#define ARGON2_VERSION_10 0x10
-#define ARGON2_VERSION_13 0x13
-
-#define ARGON2_BLOCK_SIZE 1024
-#define ARGON2_QWORDS_IN_BLOCK (ARGON2_BLOCK_SIZE / 8)
-#define ARGON2_SYNC_POINTS 4
-
-#define THREADS_PER_LANE 32
-#define QWORDS_PER_THREAD (ARGON2_QWORDS_IN_BLOCK / 32)
-
-#ifndef ARGON2_VERSION
-#define ARGON2_VERSION ARGON2_VERSION_13
-#endif
-
-#ifndef ARGON2_TYPE
-#define ARGON2_TYPE ARGON2_I
-#endif
-
-ulong u64_build(uint hi, uint lo)
-{
-    return upsample(hi, lo);
-}
-
-uint u64_lo(ulong x)
-{
-    return (uint)x;
-}
-
-uint u64_hi(ulong x)
-{
-    return (uint)(x >> 32);
-}
-
-struct u64_shuffle_buf {
-    uint lo[THREADS_PER_LANE];
-    uint hi[THREADS_PER_LANE];
-};
-
-ulong u64_shuffle(ulong v, uint thread_src, uint thread,
-                  __local struct u64_shuffle_buf *buf)
-{
-    uint lo = u64_lo(v);
-    uint hi = u64_hi(v);
-
-    buf->lo[thread] = lo;
-    buf->hi[thread] = hi;
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    lo = buf->lo[thread_src];
-    hi = buf->hi[thread_src];
-
-    return u64_build(hi, lo);
-}
-
-struct block_g {
-    ulong data[ARGON2_QWORDS_IN_BLOCK];
-};
-
-struct block_th {
-    ulong a, b, c, d;
-};
-
-ulong cmpeq_mask(uint test, uint ref)
-{
-    uint x = -(uint)(test == ref);
-    return u64_build(x, x);
-}
-
-ulong block_th_get(const struct block_th *b, uint idx)
-{
-    ulong res = 0;
-    res ^= cmpeq_mask(idx, 0) & b->a;
-    res ^= cmpeq_mask(idx, 1) & b->b;
-    res ^= cmpeq_mask(idx, 2) & b->c;
-    res ^= cmpeq_mask(idx, 3) & b->d;
-    return res;
-}
-
-void block_th_set(struct block_th *b, uint idx, ulong v)
-{
-    b->a ^= cmpeq_mask(idx, 0) & (v ^ b->a);
-    b->b ^= cmpeq_mask(idx, 1) & (v ^ b->b);
-    b->c ^= cmpeq_mask(idx, 2) & (v ^ b->c);
-    b->d ^= cmpeq_mask(idx, 3) & (v ^ b->d);
-}
-
-void move_block(struct block_th *dst, const struct block_th *src)
-{
-    *dst = *src;
-}
-
-void xor_block(struct block_th *dst, const struct block_th *src)
-{
-    dst->a ^= src->a;
-    dst->b ^= src->b;
-    dst->c ^= src->c;
-    dst->d ^= src->d;
-}
-
-void load_block(struct block_th *dst, __global const struct block_g *src,
-                uint thread)
-{
-    dst->a = src->data[0 * THREADS_PER_LANE + thread];
-    dst->b = src->data[1 * THREADS_PER_LANE + thread];
-    dst->c = src->data[2 * THREADS_PER_LANE + thread];
-    dst->d = src->data[3 * THREADS_PER_LANE + thread];
-}
-
-void load_block_xor(struct block_th *dst, __global const struct block_g *src,
-                    uint thread)
-{
-    dst->a ^= src->data[0 * THREADS_PER_LANE + thread];
-    dst->b ^= src->data[1 * THREADS_PER_LANE + thread];
-    dst->c ^= src->data[2 * THREADS_PER_LANE + thread];
-    dst->d ^= src->data[3 * THREADS_PER_LANE + thread];
-}
-
-void store_block(__global struct block_g *dst, const struct block_th *src,
-                 uint thread)
-{
-    dst->data[0 * THREADS_PER_LANE + thread] = src->a;
-    dst->data[1 * THREADS_PER_LANE + thread] = src->b;
-    dst->data[2 * THREADS_PER_LANE + thread] = src->c;
-    dst->data[3 * THREADS_PER_LANE + thread] = src->d;
-}
-
-#ifdef cl_amd_media_ops
-#pragma OPENCL EXTENSION cl_amd_media_ops : enable
-
-ulong rotr64(ulong x, ulong n)
-{
-    uint lo = u64_lo(x);
-    uint hi = u64_hi(x);
-    uint r_lo, r_hi;
-    if (n < 32) {
-        r_lo = amd_bitalign(hi, lo, (uint)n);
-        r_hi = amd_bitalign(lo, hi, (uint)n);
-    } else {
-        r_lo = amd_bitalign(lo, hi, (uint)n - 32);
-        r_hi = amd_bitalign(hi, lo, (uint)n - 32);
-    }
-    return u64_build(r_hi, r_lo);
-}
-#else
-ulong rotr64(ulong x, ulong n)
-{
-    return rotate(x, 64 - n);
-}
-#endif
-
-ulong f(ulong x, ulong y)
-{
-    uint xlo = u64_lo(x);
-    uint ylo = u64_lo(y);
-    return x + y + 2 * u64_build(mul_hi(xlo, ylo), xlo * ylo);
-}
-
-void g(struct block_th *block)
-{
-    ulong a, b, c, d;
-    a = block->a;
-    b = block->b;
-    c = block->c;
-    d = block->d;
-
-    a = f(a, b);
-    d = rotr64(d ^ a, 32);
-    c = f(c, d);
-    b = rotr64(b ^ c, 24);
-    a = f(a, b);
-    d = rotr64(d ^ a, 16);
-    c = f(c, d);
-    b = rotr64(b ^ c, 63);
-
-    block->a = a;
-    block->b = b;
-    block->c = c;
-    block->d = d;
-}
-
-uint apply_shuffle_shift1(uint thread, uint idx)
-{
-    return (thread & 0x1c) | ((thread + idx) & 0x3);
-}
-
-uint apply_shuffle_unshift1(uint thread, uint idx)
-{
-    idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;
-
-    return apply_shuffle_shift1(thread, idx);
-}
-
-uint apply_shuffle_shift2(uint thread, uint idx)
-{
-    uint lo = (thread & 0x1) | ((thread & 0x10) >> 3);
-    lo = (lo + idx) & 0x3;
-    return ((lo & 0x2) << 3) | (thread & 0xe) | (lo & 0x1);
-}
-
-uint apply_shuffle_unshift2(uint thread, uint idx)
-{
-    idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;
-
-    return apply_shuffle_shift2(thread, idx);
-}
-
-void shuffle_shift1(struct block_th *block, uint thread,
-                    __local struct u64_shuffle_buf *buf)
-{
-    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint src_thr = apply_shuffle_shift1(thread, i);
-
-        ulong v = block_th_get(block, i);
-        v = u64_shuffle(v, src_thr, thread, buf);
-        block_th_set(block, i, v);
-    }
-}
-
-void shuffle_unshift1(struct block_th *block, uint thread,
-                      __local struct u64_shuffle_buf *buf)
-{
-    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint src_thr = apply_shuffle_unshift1(thread, i);
-
-        ulong v = block_th_get(block, i);
-        v = u64_shuffle(v, src_thr, thread, buf);
-        block_th_set(block, i, v);
-    }
-}
-
-void shuffle_shift2(struct block_th *block, uint thread,
-                    __local struct u64_shuffle_buf *buf)
-{
-    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint src_thr = apply_shuffle_shift2(thread, i);
-
-        ulong v = block_th_get(block, i);
-        v = u64_shuffle(v, src_thr, thread, buf);
-        block_th_set(block, i, v);
-    }
-}
-
-void shuffle_unshift2(struct block_th *block, uint thread,
-                      __local struct u64_shuffle_buf *buf)
-{
-    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint src_thr = apply_shuffle_unshift2(thread, i);
-
-        ulong v = block_th_get(block, i);
-        v = u64_shuffle(v, src_thr, thread, buf);
-        block_th_set(block, i, v);
-    }
-}
-
-void transpose(struct block_th *block, uint thread,
-               __local struct u64_shuffle_buf *buf)
-{
-    uint thread_group = (thread & 0x0C) >> 2;
-    for (uint i = 1; i < QWORDS_PER_THREAD; i++) {
-        uint thr = (i << 2) ^ thread;
-        uint idx = thread_group ^ i;
-
-        ulong v = block_th_get(block, idx);
-        v = u64_shuffle(v, thr, thread, buf);
-        block_th_set(block, idx, v);
-    }
-}
-
-void shuffle_block(struct block_th *block, uint thread,
-                   __local struct u64_shuffle_buf *buf)
-{
-    transpose(block, thread, buf);
-
-    g(block);
-
-    shuffle_shift1(block, thread, buf);
-
-    g(block);
-
-    shuffle_unshift1(block, thread, buf);
-    transpose(block, thread, buf);
-
-    g(block);
-
-    shuffle_shift2(block, thread, buf);
-
-    g(block);
-
-    shuffle_unshift2(block, thread, buf);
-}
-
-void compute_ref_pos(uint lanes, uint segment_blocks,
-                     uint pass, uint lane, uint slice, uint offset,
-                     uint *ref_lane, uint *ref_index)
-{
-    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;
-
-    *ref_lane = *ref_lane % lanes;
-
-    uint base;
-    if (pass != 0) {
-        base = lane_blocks - segment_blocks;
-    } else {
-        if (slice == 0) {
-            *ref_lane = lane;
-        }
-        base = slice * segment_blocks;
-    }
-
-    uint ref_area_size = base + offset - 1;
-    if (*ref_lane != lane) {
-        ref_area_size = min(ref_area_size, base);
-    }
-
-    *ref_index = mul_hi(*ref_index, *ref_index);
-    *ref_index = ref_area_size - 1 - mul_hi(ref_area_size, *ref_index);
-
-    if (pass != 0 && slice != ARGON2_SYNC_POINTS - 1) {
-        *ref_index += (slice + 1) * segment_blocks;
-        if (*ref_index >= lane_blocks) {
-            *ref_index -= lane_blocks;
-        }
-    }
-}
-
-void argon2_core(
-        __global struct block_g *memory, __global struct block_g *mem_curr,
-        struct block_th *prev, struct block_th *tmp,
-        __local struct u64_shuffle_buf *shuffle_buf, uint lanes,
-        uint thread, uint pass, uint ref_index, uint ref_lane)
-{
-    __global struct block_g *mem_ref;
-    mem_ref = memory + ref_index * lanes + ref_lane;
-
-#if ARGON2_VERSION == ARGON2_VERSION_10
-    load_block_xor(prev, mem_ref, thread);
-    move_block(tmp, prev);
-#else
-    if (pass != 0) {
-        load_block(tmp, mem_curr, thread);
-        load_block_xor(prev, mem_ref, thread);
-        xor_block(tmp, prev);
-    } else {
-        load_block_xor(prev, mem_ref, thread);
-        move_block(tmp, prev);
-    }
-#endif
-
-    shuffle_block(prev, thread, shuffle_buf);
-
-    xor_block(prev, tmp);
-
-    store_block(mem_curr, prev, thread);
-}
-
-void next_addresses(struct block_th *addr, struct block_th *tmp,
-                    uint thread_input, uint thread,
-                    __local struct u64_shuffle_buf *buf)
-{
-    addr->a = u64_build(0, thread_input);
-    addr->b = 0;
-    addr->c = 0;
-    addr->d = 0;
-
-    shuffle_block(addr, thread, buf);
-
-    addr->a ^= u64_build(0, thread_input);
-    move_block(tmp, addr);
-
-    shuffle_block(addr, thread, buf);
-
-    xor_block(addr, tmp);
-}
-
-#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID
-struct ref {
-    uint ref_lane;
-    uint ref_index;
-};
-
-/*
- * Refs hierarchy:
- * lanes -> passes -> slices -> blocks
- */
-__kernel void argon2_precompute_kernel(
-        __local struct u64_shuffle_buf *shuffle_bufs, __global struct ref *refs,
-        uint passes, uint lanes, uint segment_blocks)
-{
-    uint block_id = get_global_id(0) / THREADS_PER_LANE;
-    uint warp = get_local_id(0) / THREADS_PER_LANE;
-    uint thread = get_local_id(0) % THREADS_PER_LANE;
-
-    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];
-
-    uint segment_addr_blocks = (segment_blocks + ARGON2_QWORDS_IN_BLOCK - 1)
-            / ARGON2_QWORDS_IN_BLOCK;
-    uint block = block_id % segment_addr_blocks;
-    uint segment = block_id / segment_addr_blocks;
-
-    uint slice, pass, lane;
-#if ARGON2_TYPE == ARGON2_ID
-    slice = segment % (ARGON2_SYNC_POINTS / 2);
-    lane = segment / (ARGON2_SYNC_POINTS / 2);
-    pass = 0;
-#else
-    uint pass_id;
-
-    slice = segment % ARGON2_SYNC_POINTS;
-    pass_id = segment / ARGON2_SYNC_POINTS;
-
-    pass = pass_id % passes;
-    lane = pass_id / passes;
-#endif
-
-    struct block_th addr, tmp;
-
-    uint thread_input;
-    switch (thread) {
-    case 0:
-        thread_input = pass;
-        break;
-    case 1:
-        thread_input = lane;
-        break;
-    case 2:
-        thread_input = slice;
-        break;
-    case 3:
-        thread_input = lanes * segment_blocks * ARGON2_SYNC_POINTS;
-        break;
-    case 4:
-        thread_input = passes;
-        break;
-    case 5:
-        thread_input = ARGON2_TYPE;
-        break;
-    case 6:
-        thread_input = block + 1;
-        break;
-    default:
-        thread_input = 0;
-        break;
-    }
-
-    next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);
-
-    refs += segment * segment_blocks;
-
-    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint pos = i * THREADS_PER_LANE + thread;
-        uint offset = block * ARGON2_QWORDS_IN_BLOCK + pos;
-        if (offset < segment_blocks) {
-            ulong v = block_th_get(&addr, i);
-            uint ref_index = u64_lo(v);
-            uint ref_lane  = u64_hi(v);
-
-            compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,
-                            &ref_lane, &ref_index);
-
-            refs[offset].ref_index = ref_index;
-            refs[offset].ref_lane  = ref_lane;
-        }
-    }
-}
-
-void argon2_step_precompute(
-        __global struct block_g *memory, __global struct block_g *mem_curr,
-        struct block_th *prev, struct block_th *tmp,
-        __local struct u64_shuffle_buf *shuffle_buf,
-        __global const struct ref **refs,
-        uint lanes, uint segment_blocks, uint thread,
-        uint lane, uint pass, uint slice, uint offset)
-{
-    uint ref_index, ref_lane;
-    bool data_independent;
-#if ARGON2_TYPE == ARGON2_I
-    data_independent = true;
-#elif ARGON2_TYPE == ARGON2_ID
-    data_independent = pass == 0 && slice < ARGON2_SYNC_POINTS / 2;
-#else
-    data_independent = false;
-#endif
-    if (data_independent) {
-        ref_index = (*refs)->ref_index;
-        ref_lane = (*refs)->ref_lane;
-        (*refs)++;
-    } else {
-        ulong v = u64_shuffle(prev->a, 0, thread, shuffle_buf);
-        ref_index = u64_lo(v);
-        ref_lane  = u64_hi(v);
-
-        compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,
-                        &ref_lane, &ref_index);
-    }
-
-    argon2_core(memory, mem_curr, prev, tmp, shuffle_buf, lanes, thread, pass,
-                ref_index, ref_lane);
-}
-
-__kernel void argon2_kernel_segment_precompute(
-        __local struct u64_shuffle_buf *shuffle_bufs,
-        __global struct block_g *memory, __global const struct ref *refs,
-        uint passes, uint lanes, uint segment_blocks,
-        uint pass, uint slice)
-{
-    uint job_id = get_global_id(1);
-    uint lane   = get_global_id(0) / THREADS_PER_LANE;
-    uint warp   = (get_local_id(1) * get_local_size(0) + get_local_id(0))
-            / THREADS_PER_LANE;
-    uint thread = get_local_id(0) % THREADS_PER_LANE;
-
-    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];
-
-    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;
-
-    /* select job's memory region: */
-    memory += (size_t)job_id * lanes * lane_blocks;
-
-    struct block_th prev, tmp;
-
-    __global struct block_g *mem_segment =
-            memory + slice * segment_blocks * lanes + lane;
-    __global struct block_g *mem_prev, *mem_curr;
-    uint start_offset = 0;
-    if (pass == 0) {
-        if (slice == 0) {
-            mem_prev = mem_segment + 1 * lanes;
-            mem_curr = mem_segment + 2 * lanes;
-            start_offset = 2;
-        } else {
-            mem_prev = mem_segment - lanes;
-            mem_curr = mem_segment;
-        }
-    } else {
-        mem_prev = mem_segment + (slice == 0 ? lane_blocks * lanes : 0) - lanes;
-        mem_curr = mem_segment;
-    }
-
-    load_block(&prev, mem_prev, thread);
-
-#if ARGON2_TYPE == ARGON2_ID
-        if (pass == 0 && slice < ARGON2_SYNC_POINTS / 2) {
-            refs += lane * (lane_blocks / 2) + slice * segment_blocks;
-            refs += start_offset;
-        }
-#else
-        refs += (lane * passes + pass) * lane_blocks + slice * segment_blocks;
-        refs += start_offset;
-#endif
-
-    for (uint offset = start_offset; offset < segment_blocks; ++offset) {
-        argon2_step_precompute(
-                    memory, mem_curr, &prev, &tmp, shuffle_buf, &refs, lanes,
-                    segment_blocks, thread, lane, pass, slice, offset);
-
-        mem_curr += lanes;
-    }
-}
-
-__kernel void argon2_kernel_oneshot_precompute(
-        __local struct u64_shuffle_buf *shuffle_bufs,
-        __global struct block_g *memory, __global const struct ref *refs,
-        uint passes, uint lanes, uint segment_blocks)
-{
-    uint job_id = get_global_id(1);
-    uint lane   = get_global_id(0) / THREADS_PER_LANE;
-    uint warp   = get_local_id(1) * lanes + get_local_id(0) / THREADS_PER_LANE;
-    uint thread = get_local_id(0) % THREADS_PER_LANE;
-
-    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];
-
-    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;
-
-    /* select job's memory region: */
-    memory += (size_t)job_id * lanes * lane_blocks;
-
-    struct block_th prev, tmp;
-
-    __global struct block_g *mem_lane = memory + lane;
-    __global struct block_g *mem_prev = mem_lane + 1 * lanes;
-    __global struct block_g *mem_curr = mem_lane + 2 * lanes;
-
-    load_block(&prev, mem_prev, thread);
-
-#if ARGON2_TYPE == ARGON2_ID
-    refs += lane * (lane_blocks / 2) + 2;
-#else
-    refs += lane * passes * lane_blocks + 2;
-#endif
-
-    uint skip = 2;
-    for (uint pass = 0; pass < passes; ++pass) {
-        for (uint slice = 0; slice < ARGON2_SYNC_POINTS; ++slice) {
-            for (uint offset = 0; offset < segment_blocks; ++offset) {
-                if (skip > 0) {
-                    --skip;
-                    continue;
-                }
-
-                argon2_step_precompute(
-                            memory, mem_curr, &prev, &tmp, shuffle_buf, &refs,
-                            lanes, segment_blocks, thread,
-                            lane, pass, slice, offset);
-
-                mem_curr += lanes;
-            }
-
-            barrier(CLK_GLOBAL_MEM_FENCE);
-        }
-
-        mem_curr = mem_lane;
-    }
-}
-#endif /* ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID */
-
-void argon2_step(
-        __global struct block_g *memory, __global struct block_g *mem_curr,
-        struct block_th *prev, struct block_th *tmp, struct block_th *addr,
-        __local struct u64_shuffle_buf *shuffle_buf,
-        uint lanes, uint segment_blocks, uint thread, uint *thread_input,
-        uint lane, uint pass, uint slice, uint offset)
-{
-    uint ref_index, ref_lane;
-    bool data_independent;
-#if ARGON2_TYPE == ARGON2_I
-    data_independent = true;
-#elif ARGON2_TYPE == ARGON2_ID
-    data_independent = pass == 0 && slice < ARGON2_SYNC_POINTS / 2;
-#else
-    data_independent = false;
-#endif
-    if (data_independent) {
-        uint addr_index = offset % ARGON2_QWORDS_IN_BLOCK;
-        if (addr_index == 0) {
-            if (thread == 6) {
-                ++*thread_input;
-            }
-            next_addresses(addr, tmp, *thread_input, thread, shuffle_buf);
-        }
-
-        uint thr = addr_index % THREADS_PER_LANE;
-        uint idx = addr_index / THREADS_PER_LANE;
-
-        ulong v = block_th_get(addr, idx);
-        v = u64_shuffle(v, thr, thread, shuffle_buf);
-        ref_index = u64_lo(v);
-        ref_lane  = u64_hi(v);
-    } else {
-        ulong v = u64_shuffle(prev->a, 0, thread, shuffle_buf);
-        ref_index = u64_lo(v);
-        ref_lane  = u64_hi(v);
-    }
-
-    compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,
-                    &ref_lane, &ref_index);
-
-    argon2_core(memory, mem_curr, prev, tmp, shuffle_buf, lanes, thread, pass,
-                ref_index, ref_lane);
-}
-
-__kernel void argon2_kernel_segment(
-        __local struct u64_shuffle_buf *shuffle_bufs,
-        __global struct block_g *memory, uint passes, uint lanes,
-        uint segment_blocks, uint pass, uint slice)
-{
-    uint job_id = get_global_id(1);
-    uint lane   = get_global_id(0) / THREADS_PER_LANE;
-    uint warp   = (get_local_id(1) * get_local_size(0) + get_local_id(0))
-            / THREADS_PER_LANE;
-    uint thread = get_local_id(0) % THREADS_PER_LANE;
-
-    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];
-
-    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;
-
-    /* select job's memory region: */
-    memory += (size_t)job_id * lanes * lane_blocks;
-
-    struct block_th prev, addr, tmp;
-    uint thread_input;
-
-#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID
-    switch (thread) {
-    case 0:
-        thread_input = pass;
-        break;
-    case 1:
-        thread_input = lane;
-        break;
-    case 2:
-        thread_input = slice;
-        break;
-    case 3:
-        thread_input = lanes * lane_blocks;
-        break;
-    case 4:
-        thread_input = passes;
-        break;
-    case 5:
-        thread_input = ARGON2_TYPE;
-        break;
-    default:
-        thread_input = 0;
-        break;
-    }
-
-    if (pass == 0 && slice == 0 && segment_blocks > 2) {
-        if (thread == 6) {
-            ++thread_input;
-        }
-        next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);
-    }
-#endif
-
-    __global struct block_g *mem_segment =
-            memory + slice * segment_blocks * lanes + lane;
-    __global struct block_g *mem_prev, *mem_curr;
-    uint start_offset = 0;
-    if (pass == 0) {
-        if (slice == 0) {
-            mem_prev = mem_segment + 1 * lanes;
-            mem_curr = mem_segment + 2 * lanes;
-            start_offset = 2;
-        } else {
-            mem_prev = mem_segment - lanes;
-            mem_curr = mem_segment;
-        }
-    } else {
-        mem_prev = mem_segment + (slice == 0 ? lane_blocks * lanes : 0) - lanes;
-        mem_curr = mem_segment;
-    }
-
-    load_block(&prev, mem_prev, thread);
-
-    for (uint offset = start_offset; offset < segment_blocks; ++offset) {
-        argon2_step(memory, mem_curr, &prev, &tmp, &addr, shuffle_buf,
-                    lanes, segment_blocks, thread, &thread_input,
-                    lane, pass, slice, offset);
-
-        mem_curr += lanes;
-    }
-}
-
-__kernel void argon2_kernel_oneshot(
-        __local struct u64_shuffle_buf *shuffle_bufs,
-        __global struct block_g *memory, uint passes, uint lanes,
-        uint segment_blocks)
-{
-    uint job_id = get_global_id(1);
-    uint lane   = get_global_id(0) / THREADS_PER_LANE;
-    uint warp   = get_local_id(1) * lanes + get_local_id(0) / THREADS_PER_LANE;
-    uint thread = get_local_id(0) % THREADS_PER_LANE;
-
-    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];
-
-    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;
-
-    /* select job's memory region: */
-    memory += (size_t)job_id * lanes * lane_blocks;
-
-    struct block_th prev, addr, tmp;
-    uint thread_input;
-
-#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID
-    switch (thread) {
-    case 1:
-        thread_input = lane;
-        break;
-    case 3:
-        thread_input = lanes * lane_blocks;
-        break;
-    case 4:
-        thread_input = passes;
-        break;
-    case 5:
-        thread_input = ARGON2_TYPE;
-        break;
-    default:
-        thread_input = 0;
-        break;
-    }
-
-    if (segment_blocks > 2) {
-        if (thread == 6) {
-            ++thread_input;
-        }
-        next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);
-    }
-#endif
-
-    __global struct block_g *mem_lane = memory + lane;
-    __global struct block_g *mem_prev = mem_lane + 1 * lanes;
-    __global struct block_g *mem_curr = mem_lane + 2 * lanes;
-
-    load_block(&prev, mem_prev, thread);
-
-    uint skip = 2;
-    for (uint pass = 0; pass < passes; ++pass) {
-        for (uint slice = 0; slice < ARGON2_SYNC_POINTS; ++slice) {
-            for (uint offset = 0; offset < segment_blocks; ++offset) {
-                if (skip > 0) {
-                    --skip;
-                    continue;
-                }
-
-                argon2_step(memory, mem_curr, &prev, &tmp, &addr, shuffle_buf,
-                            lanes, segment_blocks, thread, &thread_input,
-                            lane, pass, slice, offset);
-
-                mem_curr += lanes;
-            }
-
-            barrier(CLK_GLOBAL_MEM_FENCE);
-
-#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID
-            if (thread == 2) {
-                ++thread_input;
-            }
-            if (thread == 6) {
-                thread_input = 0;
-            }
-#endif
-        }
-#if ARGON2_TYPE == ARGON2_I
-        if (thread == 0) {
-            ++thread_input;
-        }
-        if (thread == 2) {
-            thread_input = 0;
-        }
-#endif
-        mem_curr = mem_lane;
-    }
-}
-)OPENCL";
+inline constexpr char kArgon2KernelSource[] =
+    "/* C compatibility For dumb IDEs: */\n"
+    "#ifndef __OPENCL_VERSION__\n"
+    "#ifndef __cplusplus\n"
+    "typedef int bool;\n"
+    "#endif\n"
+    "typedef unsigned char uchar;\n"
+    "typedef unsigned short ushort;\n"
+    "typedef unsigned int uint;\n"
+    "typedef unsigned long ulong;\n"
+    "typedef unsigned long size_t;\n"
+    "typedef long ptrdiff_t;\n"
+    "typedef size_t uintptr_t;\n"
+    "typedef ptrdiff_t intptr_t;\n"
+    "#ifndef __kernel\n"
+    "#define __kernel\n"
+    "#endif\n"
+    "#ifndef __global\n"
+    "#define __global\n"
+    "#endif\n"
+    "#ifndef __private\n"
+    "#define __private\n"
+    "#endif\n"
+    "#ifndef __local\n"
+    "#define __local\n"
+    "#endif\n"
+    "#ifndef __constant\n"
+    "#define __constant const\n"
+    "#endif\n"
+    "#endif /* __OPENCL_VERSION__ */\n"
+    "\n"
+    "#define ARGON2_D  0\n"
+    "#define ARGON2_I  1\n"
+    "#define ARGON2_ID 2\n"
+    "\n"
+    "#define ARGON2_VERSION_10 0x10\n"
+    "#define ARGON2_VERSION_13 0x13\n"
+    "\n"
+    "#define ARGON2_BLOCK_SIZE 1024\n"
+    "#define ARGON2_QWORDS_IN_BLOCK (ARGON2_BLOCK_SIZE / 8)\n"
+    "#define ARGON2_SYNC_POINTS 4\n"
+    "\n"
+    "#define THREADS_PER_LANE 32\n"
+    "#define QWORDS_PER_THREAD (ARGON2_QWORDS_IN_BLOCK / 32)\n"
+    "\n"
+    "#ifndef ARGON2_VERSION\n"
+    "#define ARGON2_VERSION ARGON2_VERSION_13\n"
+    "#endif\n"
+    "\n"
+    "#ifndef ARGON2_TYPE\n"
+    "#define ARGON2_TYPE ARGON2_I\n"
+    "#endif\n"
+    "\n"
+    "ulong u64_build(uint hi, uint lo)\n"
+    "{\n"
+    "    return upsample(hi, lo);\n"
+    "}\n"
+    "\n"
+    "uint u64_lo(ulong x)\n"
+    "{\n"
+    "    return (uint)x;\n"
+    "}\n"
+    "\n"
+    "uint u64_hi(ulong x)\n"
+    "{\n"
+    "    return (uint)(x >> 32);\n"
+    "}\n"
+    "\n"
+    "struct u64_shuffle_buf {\n"
+    "    uint lo[THREADS_PER_LANE];\n"
+    "    uint hi[THREADS_PER_LANE];\n"
+    "};\n"
+    "\n"
+    "ulong u64_shuffle(ulong v, uint thread_src, uint thread,\n"
+    "                  __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    uint lo = u64_lo(v);\n"
+    "    uint hi = u64_hi(v);\n"
+    "\n"
+    "    buf->lo[thread] = lo;\n"
+    "    buf->hi[thread] = hi;\n"
+    "\n"
+    "    barrier(CLK_LOCAL_MEM_FENCE);\n"
+    "\n"
+    "    lo = buf->lo[thread_src];\n"
+    "    hi = buf->hi[thread_src];\n"
+    "\n"
+    "    return u64_build(hi, lo);\n"
+    "}\n"
+    "\n"
+    "struct block_g {\n"
+    "    ulong data[ARGON2_QWORDS_IN_BLOCK];\n"
+    "};\n"
+    "\n"
+    "struct block_th {\n"
+    "    ulong a, b, c, d;\n"
+    "};\n"
+    "\n"
+    "ulong cmpeq_mask(uint test, uint ref)\n"
+    "{\n"
+    "    uint x = -(uint)(test == ref);\n"
+    "    return u64_build(x, x);\n"
+    "}\n"
+    "\n"
+    "ulong block_th_get(const struct block_th *b, uint idx)\n"
+    "{\n"
+    "    ulong res = 0;\n"
+    "    res ^= cmpeq_mask(idx, 0) & b->a;\n"
+    "    res ^= cmpeq_mask(idx, 1) & b->b;\n"
+    "    res ^= cmpeq_mask(idx, 2) & b->c;\n"
+    "    res ^= cmpeq_mask(idx, 3) & b->d;\n"
+    "    return res;\n"
+    "}\n"
+    "\n"
+    "void block_th_set(struct block_th *b, uint idx, ulong v)\n"
+    "{\n"
+    "    b->a ^= cmpeq_mask(idx, 0) & (v ^ b->a);\n"
+    "    b->b ^= cmpeq_mask(idx, 1) & (v ^ b->b);\n"
+    "    b->c ^= cmpeq_mask(idx, 2) & (v ^ b->c);\n"
+    "    b->d ^= cmpeq_mask(idx, 3) & (v ^ b->d);\n"
+    "}\n"
+    "\n"
+    "void move_block(struct block_th *dst, const struct block_th *src)\n"
+    "{\n"
+    "    *dst = *src;\n"
+    "}\n"
+    "\n"
+    "void xor_block(struct block_th *dst, const struct block_th *src)\n"
+    "{\n"
+    "    dst->a ^= src->a;\n"
+    "    dst->b ^= src->b;\n"
+    "    dst->c ^= src->c;\n"
+    "    dst->d ^= src->d;\n"
+    "}\n"
+    "\n"
+    "void load_block(struct block_th *dst, __global const struct block_g *src,\n"
+    "                uint thread)\n"
+    "{\n"
+    "    dst->a = src->data[0 * THREADS_PER_LANE + thread];\n"
+    "    dst->b = src->data[1 * THREADS_PER_LANE + thread];\n"
+    "    dst->c = src->data[2 * THREADS_PER_LANE + thread];\n"
+    "    dst->d = src->data[3 * THREADS_PER_LANE + thread];\n"
+    "}\n"
+    "\n"
+    "void load_block_xor(struct block_th *dst, __global const struct block_g *src,\n"
+    "                    uint thread)\n"
+    "{\n"
+    "    dst->a ^= src->data[0 * THREADS_PER_LANE + thread];\n"
+    "    dst->b ^= src->data[1 * THREADS_PER_LANE + thread];\n"
+    "    dst->c ^= src->data[2 * THREADS_PER_LANE + thread];\n"
+    "    dst->d ^= src->data[3 * THREADS_PER_LANE + thread];\n"
+    "}\n"
+    "\n"
+    "void store_block(__global struct block_g *dst, const struct block_th *src,\n"
+    "                 uint thread)\n"
+    "{\n"
+    "    dst->data[0 * THREADS_PER_LANE + thread] = src->a;\n"
+    "    dst->data[1 * THREADS_PER_LANE + thread] = src->b;\n"
+    "    dst->data[2 * THREADS_PER_LANE + thread] = src->c;\n"
+    "    dst->data[3 * THREADS_PER_LANE + thread] = src->d;\n"
+    "}\n"
+    "\n"
+    "#ifdef cl_amd_media_ops\n"
+    "#pragma OPENCL EXTENSION cl_amd_media_ops : enable\n"
+    "\n"
+    "ulong rotr64(ulong x, ulong n)\n"
+    "{\n"
+    "    uint lo = u64_lo(x);\n"
+    "    uint hi = u64_hi(x);\n"
+    "    uint r_lo, r_hi;\n"
+    "    if (n < 32) {\n"
+    "        r_lo = amd_bitalign(hi, lo, (uint)n);\n"
+    "        r_hi = amd_bitalign(lo, hi, (uint)n);\n"
+    "    } else {\n"
+    "        r_lo = amd_bitalign(lo, hi, (uint)n - 32);\n"
+    "        r_hi = amd_bitalign(hi, lo, (uint)n - 32);\n"
+    "    }\n"
+    "    return u64_build(r_hi, r_lo);\n"
+    "}\n"
+    "#else\n"
+    "ulong rotr64(ulong x, ulong n)\n"
+    "{\n"
+    "    return rotate(x, 64 - n);\n"
+    "}\n"
+    "#endif\n"
+    "\n"
+    "ulong f(ulong x, ulong y)\n"
+    "{\n"
+    "    uint xlo = u64_lo(x);\n"
+    "    uint ylo = u64_lo(y);\n"
+    "    return x + y + 2 * u64_build(mul_hi(xlo, ylo), xlo * ylo);\n"
+    "}\n"
+    "\n"
+    "void g(struct block_th *block)\n"
+    "{\n"
+    "    ulong a, b, c, d;\n"
+    "    a = block->a;\n"
+    "    b = block->b;\n"
+    "    c = block->c;\n"
+    "    d = block->d;\n"
+    "\n"
+    "    a = f(a, b);\n"
+    "    d = rotr64(d ^ a, 32);\n"
+    "    c = f(c, d);\n"
+    "    b = rotr64(b ^ c, 24);\n"
+    "    a = f(a, b);\n"
+    "    d = rotr64(d ^ a, 16);\n"
+    "    c = f(c, d);\n"
+    "    b = rotr64(b ^ c, 63);\n"
+    "\n"
+    "    block->a = a;\n"
+    "    block->b = b;\n"
+    "    block->c = c;\n"
+    "    block->d = d;\n"
+    "}\n"
+    "\n"
+    "uint apply_shuffle_shift1(uint thread, uint idx)\n"
+    "{\n"
+    "    return (thread & 0x1c) | ((thread + idx) & 0x3);\n"
+    "}\n"
+    "\n"
+    "uint apply_shuffle_unshift1(uint thread, uint idx)\n"
+    "{\n"
+    "    idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;\n"
+    "\n"
+    "    return apply_shuffle_shift1(thread, idx);\n"
+    "}\n"
+    "\n"
+    "uint apply_shuffle_shift2(uint thread, uint idx)\n"
+    "{\n"
+    "    uint lo = (thread & 0x1) | ((thread & 0x10) >> 3);\n"
+    "    lo = (lo + idx) & 0x3;\n"
+    "    return ((lo & 0x2) << 3) | (thread & 0xe) | (lo & 0x1);\n"
+    "}\n"
+    "\n"
+    "uint apply_shuffle_unshift2(uint thread, uint idx)\n"
+    "{\n"
+    "    idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;\n"
+    "\n"
+    "    return apply_shuffle_shift2(thread, idx);\n"
+    "}\n"
+    "\n"
+    "void shuffle_shift1(struct block_th *block, uint thread,\n"
+    "                    __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint src_thr = apply_shuffle_shift1(thread, i);\n"
+    "\n"
+    "        ulong v = block_th_get(block, i);\n"
+    "        v = u64_shuffle(v, src_thr, thread, buf);\n"
+    "        block_th_set(block, i, v);\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void shuffle_unshift1(struct block_th *block, uint thread,\n"
+    "                      __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint src_thr = apply_shuffle_unshift1(thread, i);\n"
+    "\n"
+    "        ulong v = block_th_get(block, i);\n"
+    "        v = u64_shuffle(v, src_thr, thread, buf);\n"
+    "        block_th_set(block, i, v);\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void shuffle_shift2(struct block_th *block, uint thread,\n"
+    "                    __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint src_thr = apply_shuffle_shift2(thread, i);\n"
+    "\n"
+    "        ulong v = block_th_get(block, i);\n"
+    "        v = u64_shuffle(v, src_thr, thread, buf);\n"
+    "        block_th_set(block, i, v);\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void shuffle_unshift2(struct block_th *block, uint thread,\n"
+    "                      __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint src_thr = apply_shuffle_unshift2(thread, i);\n"
+    "\n"
+    "        ulong v = block_th_get(block, i);\n"
+    "        v = u64_shuffle(v, src_thr, thread, buf);\n"
+    "        block_th_set(block, i, v);\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void transpose(struct block_th *block, uint thread,\n"
+    "               __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    uint thread_group = (thread & 0x0C) >> 2;\n"
+    "    for (uint i = 1; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint thr = (i << 2) ^ thread;\n"
+    "        uint idx = thread_group ^ i;\n"
+    "\n"
+    "        ulong v = block_th_get(block, idx);\n"
+    "        v = u64_shuffle(v, thr, thread, buf);\n"
+    "        block_th_set(block, idx, v);\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void shuffle_block(struct block_th *block, uint thread,\n"
+    "                   __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    transpose(block, thread, buf);\n"
+    "\n"
+    "    g(block);\n"
+    "\n"
+    "    shuffle_shift1(block, thread, buf);\n"
+    "\n"
+    "    g(block);\n"
+    "\n"
+    "    shuffle_unshift1(block, thread, buf);\n"
+    "    transpose(block, thread, buf);\n"
+    "\n"
+    "    g(block);\n"
+    "\n"
+    "    shuffle_shift2(block, thread, buf);\n"
+    "\n"
+    "    g(block);\n"
+    "\n"
+    "    shuffle_unshift2(block, thread, buf);\n"
+    "}\n"
+    "\n"
+    "void compute_ref_pos(uint lanes, uint segment_blocks,\n"
+    "                     uint pass, uint lane, uint slice, uint offset,\n"
+    "                     uint *ref_lane, uint *ref_index)\n"
+    "{\n"
+    "    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;\n"
+    "\n"
+    "    *ref_lane = *ref_lane % lanes;\n"
+    "\n"
+    "    uint base;\n"
+    "    if (pass != 0) {\n"
+    "        base = lane_blocks - segment_blocks;\n"
+    "    } else {\n"
+    "        if (slice == 0) {\n"
+    "            *ref_lane = lane;\n"
+    "        }\n"
+    "        base = slice * segment_blocks;\n"
+    "    }\n"
+    "\n"
+    "    uint ref_area_size = base + offset - 1;\n"
+    "    if (*ref_lane != lane) {\n"
+    "        ref_area_size = min(ref_area_size, base);\n"
+    "    }\n"
+    "\n"
+    "    *ref_index = mul_hi(*ref_index, *ref_index);\n"
+    "    *ref_index = ref_area_size - 1 - mul_hi(ref_area_size, *ref_index);\n"
+    "\n"
+    "    if (pass != 0 && slice != ARGON2_SYNC_POINTS - 1) {\n"
+    "        *ref_index += (slice + 1) * segment_blocks;\n"
+    "        if (*ref_index >= lane_blocks) {\n"
+    "            *ref_index -= lane_blocks;\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void argon2_core(\n"
+    "        __global struct block_g *memory, __global struct block_g *mem_curr,\n"
+    "        struct block_th *prev, struct block_th *tmp,\n"
+    "        __local struct u64_shuffle_buf *shuffle_buf, uint lanes,\n"
+    "        uint thread, uint pass, uint ref_index, uint ref_lane)\n"
+    "{\n"
+    "    __global struct block_g *mem_ref;\n"
+    "    mem_ref = memory + ref_index * lanes + ref_lane;\n"
+    "\n"
+    "#if ARGON2_VERSION == ARGON2_VERSION_10\n"
+    "    load_block_xor(prev, mem_ref, thread);\n"
+    "    move_block(tmp, prev);\n"
+    "#else\n"
+    "    if (pass != 0) {\n"
+    "        load_block(tmp, mem_curr, thread);\n"
+    "        load_block_xor(prev, mem_ref, thread);\n"
+    "        xor_block(tmp, prev);\n"
+    "    } else {\n"
+    "        load_block_xor(prev, mem_ref, thread);\n"
+    "        move_block(tmp, prev);\n"
+    "    }\n"
+    "#endif\n"
+    "\n"
+    "    shuffle_block(prev, thread, shuffle_buf);\n"
+    "\n"
+    "    xor_block(prev, tmp);\n"
+    "\n"
+    "    store_block(mem_curr, prev, thread);\n"
+    "}\n"
+    "\n"
+    "void next_addresses(struct block_th *addr, struct block_th *tmp,\n"
+    "                    uint thread_input, uint thread,\n"
+    "                    __local struct u64_shuffle_buf *buf)\n"
+    "{\n"
+    "    addr->a = u64_build(0, thread_input);\n"
+    "    addr->b = 0;\n"
+    "    addr->c = 0;\n"
+    "    addr->d = 0;\n"
+    "\n"
+    "    shuffle_block(addr, thread, buf);\n"
+    "\n"
+    "    addr->a ^= u64_build(0, thread_input);\n"
+    "    move_block(tmp, addr);\n"
+    "\n"
+    "    shuffle_block(addr, thread, buf);\n"
+    "\n"
+    "    xor_block(addr, tmp);\n"
+    "}\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID\n"
+    "struct ref {\n"
+    "    uint ref_lane;\n"
+    "    uint ref_index;\n"
+    "};\n"
+    "\n"
+    "/*\n"
+    " * Refs hierarchy:\n"
+    " * lanes -> passes -> slices -> blocks\n"
+    " */\n"
+    "__kernel void argon2_precompute_kernel(\n"
+    "        __local struct u64_shuffle_buf *shuffle_bufs, __global struct ref *refs,\n"
+    "        uint passes, uint lanes, uint segment_blocks)\n"
+    "{\n"
+    "    uint block_id = get_global_id(0) / THREADS_PER_LANE;\n"
+    "    uint warp = get_local_id(0) / THREADS_PER_LANE;\n"
+    "    uint thread = get_local_id(0) % THREADS_PER_LANE;\n"
+    "\n"
+    "    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];\n"
+    "\n"
+    "    uint segment_addr_blocks = (segment_blocks + ARGON2_QWORDS_IN_BLOCK - 1)\n"
+    "            / ARGON2_QWORDS_IN_BLOCK;\n"
+    "    uint block = block_id % segment_addr_blocks;\n"
+    "    uint segment = block_id / segment_addr_blocks;\n"
+    "\n"
+    "    uint slice, pass, lane;\n"
+    "#if ARGON2_TYPE == ARGON2_ID\n"
+    "    slice = segment % (ARGON2_SYNC_POINTS / 2);\n"
+    "    lane = segment / (ARGON2_SYNC_POINTS / 2);\n"
+    "    pass = 0;\n"
+    "#else\n"
+    "    uint pass_id;\n"
+    "\n"
+    "    slice = segment % ARGON2_SYNC_POINTS;\n"
+    "    pass_id = segment / ARGON2_SYNC_POINTS;\n"
+    "\n"
+    "    pass = pass_id % passes;\n"
+    "    lane = pass_id / passes;\n"
+    "#endif\n"
+    "\n"
+    "    struct block_th addr, tmp;\n"
+    "\n"
+    "    uint thread_input;\n"
+    "    switch (thread) {\n"
+    "    case 0:\n"
+    "        thread_input = pass;\n"
+    "        break;\n"
+    "    case 1:\n"
+    "        thread_input = lane;\n"
+    "        break;\n"
+    "    case 2:\n"
+    "        thread_input = slice;\n"
+    "        break;\n"
+    "    case 3:\n"
+    "        thread_input = lanes * segment_blocks * ARGON2_SYNC_POINTS;\n"
+    "        break;\n"
+    "    case 4:\n"
+    "        thread_input = passes;\n"
+    "        break;\n"
+    "    case 5:\n"
+    "        thread_input = ARGON2_TYPE;\n"
+    "        break;\n"
+    "    case 6:\n"
+    "        thread_input = block + 1;\n"
+    "        break;\n"
+    "    default:\n"
+    "        thread_input = 0;\n"
+    "        break;\n"
+    "    }\n"
+    "\n"
+    "    next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);\n"
+    "\n"
+    "    refs += segment * segment_blocks;\n"
+    "\n"
+    "    for (uint i = 0; i < QWORDS_PER_THREAD; i++) {\n"
+    "        uint pos = i * THREADS_PER_LANE + thread;\n"
+    "        uint offset = block * ARGON2_QWORDS_IN_BLOCK + pos;\n"
+    "        if (offset < segment_blocks) {\n"
+    "            ulong v = block_th_get(&addr, i);\n"
+    "            uint ref_index = u64_lo(v);\n"
+    "            uint ref_lane  = u64_hi(v);\n"
+    "\n"
+    "            compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,\n"
+    "                            &ref_lane, &ref_index);\n"
+    "\n"
+    "            refs[offset].ref_index = ref_index;\n"
+    "            refs[offset].ref_lane  = ref_lane;\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "void argon2_step_precompute(\n"
+    "        __global struct block_g *memory, __global struct block_g *mem_curr,\n"
+    "        struct block_th *prev, struct block_th *tmp,\n"
+    "        __local struct u64_shuffle_buf *shuffle_buf,\n"
+    "        __global const struct ref **refs,\n"
+    "        uint lanes, uint segment_blocks, uint thread,\n"
+    "        uint lane, uint pass, uint slice, uint offset)\n"
+    "{\n"
+    "    uint ref_index, ref_lane;\n"
+    "    bool data_independent;\n"
+    "#if ARGON2_TYPE == ARGON2_I\n"
+    "    data_independent = true;\n"
+    "#elif ARGON2_TYPE == ARGON2_ID\n"
+    "    data_independent = pass == 0 && slice < ARGON2_SYNC_POINTS / 2;\n"
+    "#else\n"
+    "    data_independent = false;\n"
+    "#endif\n"
+    "    if (data_independent) {\n"
+    "        ref_index = (*refs)->ref_index;\n"
+    "        ref_lane = (*refs)->ref_lane;\n"
+    "        (*refs)++;\n"
+    "    } else {\n"
+    "        ulong v = u64_shuffle(prev->a, 0, thread, shuffle_buf);\n"
+    "        ref_index = u64_lo(v);\n"
+    "        ref_lane  = u64_hi(v);\n"
+    "\n"
+    "        compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,\n"
+    "                        &ref_lane, &ref_index);\n"
+    "    }\n"
+    "\n"
+    "    argon2_core(memory, mem_curr, prev, tmp, shuffle_buf, lanes, thread, pass,\n"
+    "                ref_index, ref_lane);\n"
+    "}\n"
+    "\n"
+    "__kernel void argon2_kernel_segment_precompute(\n"
+    "        __local struct u64_shuffle_buf *shuffle_bufs,\n"
+    "        __global struct block_g *memory, __global const struct ref *refs,\n"
+    "        uint passes, uint lanes, uint segment_blocks,\n"
+    "        uint pass, uint slice)\n"
+    "{\n"
+    "    uint job_id = get_global_id(1);\n"
+    "    uint lane   = get_global_id(0) / THREADS_PER_LANE;\n"
+    "    uint warp   = (get_local_id(1) * get_local_size(0) + get_local_id(0))\n"
+    "            / THREADS_PER_LANE;\n"
+    "    uint thread = get_local_id(0) % THREADS_PER_LANE;\n"
+    "\n"
+    "    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];\n"
+    "\n"
+    "    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;\n"
+    "\n"
+    "    /* select job's memory region: */\n"
+    "    memory += (size_t)job_id * lanes * lane_blocks;\n"
+    "\n"
+    "    struct block_th prev, tmp;\n"
+    "\n"
+    "    __global struct block_g *mem_segment =\n"
+    "            memory + slice * segment_blocks * lanes + lane;\n"
+    "    __global struct block_g *mem_prev, *mem_curr;\n"
+    "    uint start_offset = 0;\n"
+    "    if (pass == 0) {\n"
+    "        if (slice == 0) {\n"
+    "            mem_prev = mem_segment + 1 * lanes;\n"
+    "            mem_curr = mem_segment + 2 * lanes;\n"
+    "            start_offset = 2;\n"
+    "        } else {\n"
+    "            mem_prev = mem_segment - lanes;\n"
+    "            mem_curr = mem_segment;\n"
+    "        }\n"
+    "    } else {\n"
+    "        mem_prev = mem_segment + (slice == 0 ? lane_blocks * lanes : 0) - lanes;\n"
+    "        mem_curr = mem_segment;\n"
+    "    }\n"
+    "\n"
+    "    load_block(&prev, mem_prev, thread);\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_ID\n"
+    "        if (pass == 0 && slice < ARGON2_SYNC_POINTS / 2) {\n"
+    "            refs += lane * (lane_blocks / 2) + slice * segment_blocks;\n"
+    "            refs += start_offset;\n"
+    "        }\n"
+    "#else\n"
+    "        refs += (lane * passes + pass) * lane_blocks + slice * segment_blocks;\n"
+    "        refs += start_offset;\n"
+    "#endif\n"
+    "\n"
+    "    for (uint offset = start_offset; offset < segment_blocks; ++offset) {\n"
+    "        argon2_step_precompute(\n"
+    "                    memory, mem_curr, &prev, &tmp, shuffle_buf, &refs, lanes,\n"
+    "                    segment_blocks, thread, lane, pass, slice, offset);\n"
+    "\n"
+    "        mem_curr += lanes;\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "__kernel void argon2_kernel_oneshot_precompute(\n"
+    "        __local struct u64_shuffle_buf *shuffle_bufs,\n"
+    "        __global struct block_g *memory, __global const struct ref *refs,\n"
+    "        uint passes, uint lanes, uint segment_blocks)\n"
+    "{\n"
+    "    uint job_id = get_global_id(1);\n"
+    "    uint lane   = get_global_id(0) / THREADS_PER_LANE;\n"
+    "    uint warp   = get_local_id(1) * lanes + get_local_id(0) / THREADS_PER_LANE;\n"
+    "    uint thread = get_local_id(0) % THREADS_PER_LANE;\n"
+    "\n"
+    "    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];\n"
+    "\n"
+    "    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;\n"
+    "\n"
+    "    /* select job's memory region: */\n"
+    "    memory += (size_t)job_id * lanes * lane_blocks;\n"
+    "\n"
+    "    struct block_th prev, tmp;\n"
+    "\n"
+    "    __global struct block_g *mem_lane = memory + lane;\n"
+    "    __global struct block_g *mem_prev = mem_lane + 1 * lanes;\n"
+    "    __global struct block_g *mem_curr = mem_lane + 2 * lanes;\n"
+    "\n"
+    "    load_block(&prev, mem_prev, thread);\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_ID\n"
+    "    refs += lane * (lane_blocks / 2) + 2;\n"
+    "#else\n"
+    "    refs += lane * passes * lane_blocks + 2;\n"
+    "#endif\n"
+    "\n"
+    "    uint skip = 2;\n"
+    "    for (uint pass = 0; pass < passes; ++pass) {\n"
+    "        for (uint slice = 0; slice < ARGON2_SYNC_POINTS; ++slice) {\n"
+    "            for (uint offset = 0; offset < segment_blocks; ++offset) {\n"
+    "                if (skip > 0) {\n"
+    "                    --skip;\n"
+    "                    continue;\n"
+    "                }\n"
+    "\n"
+    "                argon2_step_precompute(\n"
+    "                            memory, mem_curr, &prev, &tmp, shuffle_buf, &refs,\n"
+    "                            lanes, segment_blocks, thread,\n"
+    "                            lane, pass, slice, offset);\n"
+    "\n"
+    "                mem_curr += lanes;\n"
+    "            }\n"
+    "\n"
+    "            barrier(CLK_GLOBAL_MEM_FENCE);\n"
+    "        }\n"
+    "\n"
+    "        mem_curr = mem_lane;\n"
+    "    }\n"
+    "}\n"
+    "#endif /* ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID */\n"
+    "\n"
+    "void argon2_step(\n"
+    "        __global struct block_g *memory, __global struct block_g *mem_curr,\n"
+    "        struct block_th *prev, struct block_th *tmp, struct block_th *addr,\n"
+    "        __local struct u64_shuffle_buf *shuffle_buf,\n"
+    "        uint lanes, uint segment_blocks, uint thread, uint *thread_input,\n"
+    "        uint lane, uint pass, uint slice, uint offset)\n"
+    "{\n"
+    "    uint ref_index, ref_lane;\n"
+    "    bool data_independent;\n"
+    "#if ARGON2_TYPE == ARGON2_I\n"
+    "    data_independent = true;\n"
+    "#elif ARGON2_TYPE == ARGON2_ID\n"
+    "    data_independent = pass == 0 && slice < ARGON2_SYNC_POINTS / 2;\n"
+    "#else\n"
+    "    data_independent = false;\n"
+    "#endif\n"
+    "    if (data_independent) {\n"
+    "        uint addr_index = offset % ARGON2_QWORDS_IN_BLOCK;\n"
+    "        if (addr_index == 0) {\n"
+    "            if (thread == 6) {\n"
+    "                ++*thread_input;\n"
+    "            }\n"
+    "            next_addresses(addr, tmp, *thread_input, thread, shuffle_buf);\n"
+    "        }\n"
+    "\n"
+    "        uint thr = addr_index % THREADS_PER_LANE;\n"
+    "        uint idx = addr_index / THREADS_PER_LANE;\n"
+    "\n"
+    "        ulong v = block_th_get(addr, idx);\n"
+    "        v = u64_shuffle(v, thr, thread, shuffle_buf);\n"
+    "        ref_index = u64_lo(v);\n"
+    "        ref_lane  = u64_hi(v);\n"
+    "    } else {\n"
+    "        ulong v = u64_shuffle(prev->a, 0, thread, shuffle_buf);\n"
+    "        ref_index = u64_lo(v);\n"
+    "        ref_lane  = u64_hi(v);\n"
+    "    }\n"
+    "\n"
+    "    compute_ref_pos(lanes, segment_blocks, pass, lane, slice, offset,\n"
+    "                    &ref_lane, &ref_index);\n"
+    "\n"
+    "    argon2_core(memory, mem_curr, prev, tmp, shuffle_buf, lanes, thread, pass,\n"
+    "                ref_index, ref_lane);\n"
+    "}\n"
+    "\n"
+    "__kernel void argon2_kernel_segment(\n"
+    "        __local struct u64_shuffle_buf *shuffle_bufs,\n"
+    "        __global struct block_g *memory, uint passes, uint lanes,\n"
+    "        uint segment_blocks, uint pass, uint slice)\n"
+    "{\n"
+    "    uint job_id = get_global_id(1);\n"
+    "    uint lane   = get_global_id(0) / THREADS_PER_LANE;\n"
+    "    uint warp   = (get_local_id(1) * get_local_size(0) + get_local_id(0))\n"
+    "            / THREADS_PER_LANE;\n"
+    "    uint thread = get_local_id(0) % THREADS_PER_LANE;\n"
+    "\n"
+    "    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];\n"
+    "\n"
+    "    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;\n"
+    "\n"
+    "    /* select job's memory region: */\n"
+    "    memory += (size_t)job_id * lanes * lane_blocks;\n"
+    "\n"
+    "    struct block_th prev, addr, tmp;\n"
+    "    uint thread_input;\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID\n"
+    "    switch (thread) {\n"
+    "    case 0:\n"
+    "        thread_input = pass;\n"
+    "        break;\n"
+    "    case 1:\n"
+    "        thread_input = lane;\n"
+    "        break;\n"
+    "    case 2:\n"
+    "        thread_input = slice;\n"
+    "        break;\n"
+    "    case 3:\n"
+    "        thread_input = lanes * lane_blocks;\n"
+    "        break;\n"
+    "    case 4:\n"
+    "        thread_input = passes;\n"
+    "        break;\n"
+    "    case 5:\n"
+    "        thread_input = ARGON2_TYPE;\n"
+    "        break;\n"
+    "    default:\n"
+    "        thread_input = 0;\n"
+    "        break;\n"
+    "    }\n"
+    "\n"
+    "    if (pass == 0 && slice == 0 && segment_blocks > 2) {\n"
+    "        if (thread == 6) {\n"
+    "            ++thread_input;\n"
+    "        }\n"
+    "        next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);\n"
+    "    }\n"
+    "#endif\n"
+    "\n"
+    "    __global struct block_g *mem_segment =\n"
+    "            memory + slice * segment_blocks * lanes + lane;\n"
+    "    __global struct block_g *mem_prev, *mem_curr;\n"
+    "    uint start_offset = 0;\n"
+    "    if (pass == 0) {\n"
+    "        if (slice == 0) {\n"
+    "            mem_prev = mem_segment + 1 * lanes;\n"
+    "            mem_curr = mem_segment + 2 * lanes;\n"
+    "            start_offset = 2;\n"
+    "        } else {\n"
+    "            mem_prev = mem_segment - lanes;\n"
+    "            mem_curr = mem_segment;\n"
+    "        }\n"
+    "    } else {\n"
+    "        mem_prev = mem_segment + (slice == 0 ? lane_blocks * lanes : 0) - lanes;\n"
+    "        mem_curr = mem_segment;\n"
+    "    }\n"
+    "\n"
+    "    load_block(&prev, mem_prev, thread);\n"
+    "\n"
+    "    for (uint offset = start_offset; offset < segment_blocks; ++offset) {\n"
+    "        argon2_step(memory, mem_curr, &prev, &tmp, &addr, shuffle_buf,\n"
+    "                    lanes, segment_blocks, thread, &thread_input,\n"
+    "                    lane, pass, slice, offset);\n"
+    "\n"
+    "        mem_curr += lanes;\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "__kernel void argon2_kernel_oneshot(\n"
+    "        __local struct u64_shuffle_buf *shuffle_bufs,\n"
+    "        __global struct block_g *memory, uint passes, uint lanes,\n"
+    "        uint segment_blocks)\n"
+    "{\n"
+    "    uint job_id = get_global_id(1);\n"
+    "    uint lane   = get_global_id(0) / THREADS_PER_LANE;\n"
+    "    uint warp   = get_local_id(1) * lanes + get_local_id(0) / THREADS_PER_LANE;\n"
+    "    uint thread = get_local_id(0) % THREADS_PER_LANE;\n"
+    "\n"
+    "    __local struct u64_shuffle_buf *shuffle_buf = &shuffle_bufs[warp];\n"
+    "\n"
+    "    uint lane_blocks = ARGON2_SYNC_POINTS * segment_blocks;\n"
+    "\n"
+    "    /* select job's memory region: */\n"
+    "    memory += (size_t)job_id * lanes * lane_blocks;\n"
+    "\n"
+    "    struct block_th prev, addr, tmp;\n"
+    "    uint thread_input;\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID\n"
+    "    switch (thread) {\n"
+    "    case 1:\n"
+    "        thread_input = lane;\n"
+    "        break;\n"
+    "    case 3:\n"
+    "        thread_input = lanes * lane_blocks;\n"
+    "        break;\n"
+    "    case 4:\n"
+    "        thread_input = passes;\n"
+    "        break;\n"
+    "    case 5:\n"
+    "        thread_input = ARGON2_TYPE;\n"
+    "        break;\n"
+    "    default:\n"
+    "        thread_input = 0;\n"
+    "        break;\n"
+    "    }\n"
+    "\n"
+    "    if (segment_blocks > 2) {\n"
+    "        if (thread == 6) {\n"
+    "            ++thread_input;\n"
+    "        }\n"
+    "        next_addresses(&addr, &tmp, thread_input, thread, shuffle_buf);\n"
+    "    }\n"
+    "#endif\n"
+    "\n"
+    "    __global struct block_g *mem_lane = memory + lane;\n"
+    "    __global struct block_g *mem_prev = mem_lane + 1 * lanes;\n"
+    "    __global struct block_g *mem_curr = mem_lane + 2 * lanes;\n"
+    "\n"
+    "    load_block(&prev, mem_prev, thread);\n"
+    "\n"
+    "    uint skip = 2;\n"
+    "    for (uint pass = 0; pass < passes; ++pass) {\n"
+    "        for (uint slice = 0; slice < ARGON2_SYNC_POINTS; ++slice) {\n"
+    "            for (uint offset = 0; offset < segment_blocks; ++offset) {\n"
+    "                if (skip > 0) {\n"
+    "                    --skip;\n"
+    "                    continue;\n"
+    "                }\n"
+    "\n"
+    "                argon2_step(memory, mem_curr, &prev, &tmp, &addr, shuffle_buf,\n"
+    "                            lanes, segment_blocks, thread, &thread_input,\n"
+    "                            lane, pass, slice, offset);\n"
+    "\n"
+    "                mem_curr += lanes;\n"
+    "            }\n"
+    "\n"
+    "            barrier(CLK_GLOBAL_MEM_FENCE);\n"
+    "\n"
+    "#if ARGON2_TYPE == ARGON2_I || ARGON2_TYPE == ARGON2_ID\n"
+    "            if (thread == 2) {\n"
+    "                ++thread_input;\n"
+    "            }\n"
+    "            if (thread == 6) {\n"
+    "                thread_input = 0;\n"
+    "            }\n"
+    "#endif\n"
+    "        }\n"
+    "#if ARGON2_TYPE == ARGON2_I\n"
+    "        if (thread == 0) {\n"
+    "            ++thread_input;\n"
+    "        }\n"
+    "        if (thread == 2) {\n"
+    "            thread_input = 0;\n"
+    "        }\n"
+    "#endif\n"
+    "        mem_curr = mem_lane;\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    ;
 
 } // namespace app

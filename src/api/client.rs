@@ -2,11 +2,15 @@ use std::time::Duration;
 
 use crate::model::{
     AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
-    CheckinTodayResponse, ConfigResponse, HistoryResponse, LoginRequest, LoginResponse,
+    CheckinTodayResponse, ConfigResponse, HistoryResponse, LogicGameActionResponse,
+    LogicGameConfigResponse, LogicGameHistoryResponse, LogicGameKind, LogicGameMeResponse,
+    LogicGameStartRequest, LogicGameStartResponse, LogicGameStep, LoginRequest, LoginResponse,
     MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse,
-    MemoryMeResponse, MemoryStartRequest, MemoryStartResponse, Puzzle15ConfigResponse,
-    Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest, Puzzle15MoveResponse,
-    Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
+    MemoryMeResponse, MemoryStartRequest, MemoryStartResponse, MinesweeperClickRequest,
+    MinesweeperClickResponse, MinesweeperConfigResponse, MinesweeperHistoryResponse,
+    MinesweeperMeResponse, MinesweeperStartRequest, MinesweeperStartResponse,
+    Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest,
+    Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
     Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
     Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
     ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
@@ -28,13 +32,15 @@ use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
     DEFAULT_BASE_URL, DEFAULT_USER_AGENT, LOGIN_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH,
-    MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH, PUZZLE_15_CONFIG_PATH,
-    PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH,
-    PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH, PUZZLE_2048_HISTORY_PATH,
-    PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH,
-    SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH,
-    SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH,
-    TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
+    MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH, MINESWEEPER_CLICK_PATH,
+    MINESWEEPER_CONFIG_PATH, MINESWEEPER_HISTORY_PATH, MINESWEEPER_ME_PATH, MINESWEEPER_START_PATH,
+    PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH,
+    PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
+    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH,
+    SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SUDOKU_CONFIG_PATH,
+    SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH,
+    TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH,
+    UnauthorizedError,
 };
 
 impl ApiClient {
@@ -447,6 +453,205 @@ impl ApiClient {
             auth_token,
             &(self.base_url.clone() + "/memory"),
             Some(&MemoryFlipRequest { session_id, index }),
+        )
+    }
+
+    pub fn get_minesweeper_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<MinesweeperConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MINESWEEPER_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/minesweeper"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_minesweeper_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<MinesweeperHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            MINESWEEPER_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/minesweeper"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_minesweeper_me(&self, auth_token: &str) -> Result<MinesweeperMeResponse, ApiError> {
+        let response: MinesweeperMeResponse = self.get_json(
+            Method::GET,
+            MINESWEEPER_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/minesweeper"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "获取扫雷账号信息失败：服务端返回 ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_minesweeper(
+        &self,
+        auth_token: &str,
+        difficulty: &str,
+    ) -> Result<MinesweeperStartResponse, ApiError> {
+        let mut response: MinesweeperStartResponse = self.get_json(
+            Method::POST,
+            MINESWEEPER_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/minesweeper"),
+            Some(&MinesweeperStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn click_minesweeper(
+        &self,
+        auth_token: &str,
+        play_id: i32,
+        action: &str,
+        x: i32,
+        y: i32,
+    ) -> Result<MinesweeperClickResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            MINESWEEPER_CLICK_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/minesweeper"),
+            Some(&MinesweeperClickRequest {
+                play_id,
+                action: action.to_string(),
+                x,
+                y,
+            }),
+        )
+    }
+
+    pub fn get_logic_game_config(
+        &self,
+        auth_token: &str,
+        kind: LogicGameKind,
+    ) -> Result<LogicGameConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            kind.config_path(),
+            auth_token,
+            &(self.base_url.clone() + kind.referer_path()),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_logic_game_me(
+        &self,
+        auth_token: &str,
+        kind: LogicGameKind,
+    ) -> Result<LogicGameMeResponse, ApiError> {
+        let response: LogicGameMeResponse = self.get_json(
+            Method::GET,
+            kind.me_path(),
+            auth_token,
+            &(self.base_url.clone() + kind.referer_path()),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(format!(
+                "获取{}账号信息失败：服务端返回 ok=false",
+                kind.title()
+            )));
+        }
+        Ok(response)
+    }
+
+    pub fn start_logic_game(
+        &self,
+        auth_token: &str,
+        kind: LogicGameKind,
+        difficulty: &str,
+    ) -> Result<LogicGameStartResponse, ApiError> {
+        let mut response: LogicGameStartResponse = self.get_json(
+            Method::POST,
+            kind.start_path(),
+            auth_token,
+            &(self.base_url.clone() + kind.referer_path()),
+            Some(&LogicGameStartRequest {
+                difficulty: difficulty.to_string(),
+            }),
+        )?;
+        if response.session.difficulty.trim().is_empty() {
+            response.session.difficulty = difficulty.to_string();
+        }
+        Ok(response)
+    }
+
+    pub fn step_logic_game(
+        &self,
+        auth_token: &str,
+        kind: LogicGameKind,
+        session_id: i32,
+        step: &LogicGameStep,
+    ) -> Result<LogicGameActionResponse, ApiError> {
+        let payload = match step {
+            LogicGameStep::Move { direction } => serde_json::json!({
+                "session_id": session_id,
+                "direction": direction,
+            }),
+            LogicGameStep::Click { r, c } => serde_json::json!({
+                "session_id": session_id,
+                "r": r,
+                "c": c,
+            }),
+            LogicGameStep::Mark { action, r, c } => serde_json::json!({
+                "session_id": session_id,
+                "action": action,
+                "r": r,
+                "c": c,
+            }),
+            LogicGameStep::Paint {
+                action,
+                color,
+                r,
+                c,
+            } => serde_json::json!({
+                "session_id": session_id,
+                "action": action,
+                "color": color,
+                "r": r,
+                "c": c,
+            }),
+        };
+        self.get_json(
+            Method::POST,
+            kind.action_path(),
+            auth_token,
+            &(self.base_url.clone() + kind.referer_path()),
+            Some(&payload),
+        )
+    }
+
+    pub fn get_logic_game_history(
+        &self,
+        auth_token: &str,
+        kind: LogicGameKind,
+    ) -> Result<LogicGameHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            kind.history_path(),
+            auth_token,
+            &(self.base_url.clone() + kind.referer_path()),
+            Option::<&()>::None,
         )
     }
 
