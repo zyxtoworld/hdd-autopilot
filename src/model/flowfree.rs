@@ -134,6 +134,11 @@ pub struct FlowfreeFinishRequest {
     pub moves: Vec<FlowfreeMove>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FlowfreeAbandonRequest {
+    pub session_id: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct FlowfreeFinishResponse {
     #[serde(default)]
@@ -155,6 +160,8 @@ pub struct FlowfreeFinishResponse {
     #[serde(default)]
     pub won: bool,
 }
+
+pub type FlowfreeAbandonResponse = FlowfreeFinishResponse;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct FlowfreeHistoryResponse {

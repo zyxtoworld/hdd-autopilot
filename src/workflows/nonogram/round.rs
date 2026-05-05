@@ -2,12 +2,12 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::model::{NonogramClickResponse, NonogramConfigResponse, NonogramSession};
+use crate::model::{NonogramConfigResponse, NonogramFinishResponse, NonogramMove, NonogramSession};
 use crate::solver::nonogram;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    with_auth_retry_api_until_success,
 };
 
 use super::types::{NonogramDifficultySummary, NonogramRoundSummary, RoundProgress};
@@ -29,7 +29,7 @@ pub(super) fn play_round(
     progress: RoundProgress,
 ) -> io::Result<NonogramRoundSummary> {
     let started = Instant::now();
-    let mut session = start;
+    let session = start;
     let steps = match nonogram::solve(&session) {
         Ok(steps) => steps,
         Err(error) => {
@@ -42,7 +42,7 @@ pub(super) fn play_round(
                     started,
                     planned_steps: 0,
                     actual_steps: 0,
-                    error_message: format!("求解失败：{error}"),
+                    error_message: format!("nonogram solve failed: {error}"),
                 },
             ));
         }
@@ -58,59 +58,80 @@ pub(super) fn play_round(
                 started,
                 planned_steps: 0,
                 actual_steps: 0,
-                error_message: "求解器没有给出操作步骤".to_string(),
+                error_message: "nonogram solver returned no moves".to_string(),
             },
         ));
     }
 
-    let mut actual_steps = 0i32;
-    for step in steps {
-        ui::check_cancel(cancel_flag)?;
-        if config.min_interval_ms > 0 {
-            ui::sleep_with_cancel(
-                cancel_flag,
-                std::time::Duration::from_millis(config.min_interval_ms as u64),
-            )?;
-        }
-        let response = step_once(
-            cancel_flag,
-            state,
-            runtime,
-            StepAttempt {
-                session_id: session.session_id,
-                action: step.action.clone(),
-                r: step.r,
-                c: step.c,
-                step_number: actual_steps + 1,
+    play_round_with_finish(
+        cancel_flag,
+        state,
+        runtime,
+        config,
+        session,
+        continued,
+        &progress,
+        started,
+        planned_steps,
+        steps,
+    )
+}
+
+fn play_round_with_finish(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    config: &NonogramConfigResponse,
+    mut session: NonogramSession,
+    continued: bool,
+    progress: &RoundProgress,
+    started: Instant,
+    planned_steps: i32,
+    steps: Vec<nonogram::NonogramStep>,
+) -> io::Result<NonogramRoundSummary> {
+    sleep_before_finish(
+        cancel_flag,
+        session.started_at_ms,
+        planned_steps,
+        config.min_interval_ms,
+    )?;
+    ui::check_cancel(cancel_flag)?;
+    let moves = steps
+        .into_iter()
+        .map(|step| NonogramMove(step.action, step.r, step.c))
+        .collect::<Vec<_>>();
+    let response = finish_once(
+        cancel_flag,
+        state,
+        runtime,
+        FinishAttempt {
+            session_id: session.session_id,
+            moves,
+        },
+    )?;
+    let actual_steps = planned_steps;
+    if !response.ok {
+        return Ok(build_round_summary(
+            runtime.email(),
+            &session,
+            RoundBuildContext {
+                continued,
+                progress,
+                started,
+                planned_steps,
+                actual_steps,
+                error_message: "nonogram finish returned ok=false".to_string(),
             },
-        )?;
-        actual_steps += 1;
-        if !response.ok {
-            return Ok(build_round_summary(
-                runtime.email(),
-                &session,
-                RoundBuildContext {
-                    continued,
-                    progress: &progress,
-                    started,
-                    planned_steps,
-                    actual_steps,
-                    error_message: "操作接口返回 ok=false".to_string(),
-                },
-            ));
-        }
-        session = merge_session(&session, response);
-        if is_finished(&session) {
-            break;
-        }
+        ));
     }
+    session = merge_session(&session, response);
 
     let mut result = build_round_summary(
         runtime.email(),
         &session,
         RoundBuildContext {
             continued,
-            progress: &progress,
+            progress,
             started,
             planned_steps,
             actual_steps,
@@ -118,44 +139,57 @@ pub(super) fn play_round(
         },
     );
     if !is_finished(&session) {
-        result.error_message = "执行完求解步骤后服务端仍未结算通关".to_string();
+        result.error_message = "nonogram finish did not settle the session".to_string();
     }
     Ok(result)
 }
 
-struct StepAttempt {
+struct FinishAttempt {
     session_id: i32,
-    action: String,
-    r: i32,
-    c: i32,
-    step_number: i32,
+    moves: Vec<NonogramMove>,
 }
 
-fn step_once(
+fn finish_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    attempt: StepAttempt,
-) -> io::Result<NonogramClickResponse> {
-    let operation = retry_operation_with_step("nonogram click", attempt.step_number);
+    attempt: FinishAttempt,
+) -> io::Result<NonogramFinishResponse> {
     with_auth_retry_api_until_success(
         cancel_flag,
         state,
         runtime,
-        &operation,
+        "nonogram finish",
         |client, auth_token| {
-            client.click_nonogram(
-                auth_token,
-                attempt.session_id,
-                &attempt.action,
-                attempt.r,
-                attempt.c,
-            )
+            client.finish_nonogram(auth_token, attempt.session_id, attempt.moves.clone())
         },
     )
 }
 
-fn merge_session(previous: &NonogramSession, response: NonogramClickResponse) -> NonogramSession {
+fn sleep_before_finish(
+    cancel_flag: &ui::CancelFlag,
+    started_at_ms: i64,
+    planned_steps: i32,
+    min_interval_ms: i32,
+) -> io::Result<()> {
+    let min_move_delay = if min_interval_ms > 0 && planned_steps > 0 {
+        min_interval_ms as i64 * planned_steps as i64
+    } else {
+        0
+    };
+    let elapsed = current_unix_ms().saturating_sub(started_at_ms.max(0));
+    let required = min_move_delay.max(3_100);
+    let wait_ms = required.saturating_sub(elapsed);
+    if wait_ms > 0 {
+        ui::sleep_with_cancel(
+            cancel_flag,
+            std::time::Duration::from_millis(wait_ms as u64),
+        )?;
+    }
+    Ok(())
+}
+
+fn merge_session(previous: &NonogramSession, response: NonogramFinishResponse) -> NonogramSession {
     let mut session = if response.session.session_id > 0 {
         response.session
     } else {
@@ -270,19 +304,16 @@ fn is_terminal_status(status: &str) -> bool {
 
 pub(super) fn is_daily_limit_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("次数已经用完")
-        || lower.contains("次数已用完")
-        || lower.contains("今日次数")
-        || lower.contains("daily limit")
+    lower.contains("daily limit")
         || lower.contains("no remaining plays")
         || lower.contains("remaining plays exhausted")
+        || lower.contains("plays exhausted")
 }
 
 pub(super) fn is_active_session_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("未结束对局")
-        || lower.contains("未结束的对局")
-        || lower.contains("进行中")
-        || lower.contains("active session")
+    lower.contains("active session")
+        || lower.contains("finish your current")
+        || lower.contains("current nonogram session")
         || lower.contains("max active")
 }

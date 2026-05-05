@@ -2,7 +2,10 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::model::{FlowfreeConfigResponse, FlowfreeFinishResponse, FlowfreeMove, FlowfreeSession};
+use crate::model::{
+    FlowfreeAbandonResponse, FlowfreeConfigResponse, FlowfreeFinishResponse, FlowfreeMove,
+    FlowfreeSession,
+};
 use crate::solver::flowfree;
 use crate::ui;
 use crate::workflows::common::{
@@ -33,6 +36,37 @@ pub(super) fn play_round(
     let steps = match flowfree::solve(&session) {
         Ok(steps) => steps,
         Err(error) => {
+            if flowfree::is_proven_unsolvable_error(&error) {
+                let response =
+                    abandon_unsolvable_once(cancel_flag, state, runtime, session.session_id)?;
+                if response.ok {
+                    session = merge_session(&session, response);
+                    return Ok(build_round_summary(
+                        runtime.email(),
+                        &session,
+                        RoundBuildContext {
+                            continued,
+                            progress: &progress,
+                            started,
+                            planned_steps: 0,
+                            actual_steps: 0,
+                            error_message: String::new(),
+                        },
+                    ));
+                }
+                return Ok(build_round_summary(
+                    runtime.email(),
+                    &session,
+                    RoundBuildContext {
+                        continued,
+                        progress: &progress,
+                        started,
+                        planned_steps: 0,
+                        actual_steps: 0,
+                        error_message: "flowfree abandon returned ok=false".to_string(),
+                    },
+                ));
+            }
             return Ok(build_round_summary(
                 runtime.email(),
                 &session,
@@ -63,12 +97,12 @@ pub(super) fn play_round(
         ));
     }
 
-    if config.min_interval_ms > 0 && planned_steps > 0 {
-        ui::sleep_with_cancel(
-            cancel_flag,
-            std::time::Duration::from_millis(config.min_interval_ms as u64 * planned_steps as u64),
-        )?;
-    }
+    sleep_before_finish(
+        cancel_flag,
+        session.started_at_ms,
+        planned_steps,
+        config.min_interval_ms,
+    )?;
     ui::check_cancel(cancel_flag)?;
     let moves = steps
         .into_iter()
@@ -118,6 +152,21 @@ pub(super) fn play_round(
     Ok(result)
 }
 
+fn abandon_unsolvable_once(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    session_id: i32,
+) -> io::Result<FlowfreeAbandonResponse> {
+    with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "flowfree abandon",
+        |client, auth_token| client.abandon_flowfree(auth_token, session_id),
+    )
+}
+
 struct FinishAttempt {
     session_id: i32,
     moves: Vec<FlowfreeMove>,
@@ -138,6 +187,29 @@ fn finish_once(
             client.finish_flowfree(auth_token, attempt.session_id, attempt.moves.clone())
         },
     )
+}
+
+fn sleep_before_finish(
+    cancel_flag: &ui::CancelFlag,
+    started_at_ms: i64,
+    planned_steps: i32,
+    min_interval_ms: i32,
+) -> io::Result<()> {
+    let min_move_delay = if min_interval_ms > 0 && planned_steps > 0 {
+        min_interval_ms as i64 * planned_steps as i64
+    } else {
+        0
+    };
+    let elapsed = current_unix_ms().saturating_sub(started_at_ms.max(0));
+    let required = min_move_delay.max(3_100);
+    let wait_ms = required.saturating_sub(elapsed);
+    if wait_ms > 0 {
+        ui::sleep_with_cancel(
+            cancel_flag,
+            std::time::Duration::from_millis(wait_ms as u64),
+        )?;
+    }
+    Ok(())
 }
 
 fn merge_session(previous: &FlowfreeSession, response: FlowfreeFinishResponse) -> FlowfreeSession {

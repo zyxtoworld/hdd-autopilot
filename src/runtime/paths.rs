@@ -308,14 +308,26 @@ mod tests {
 
     #[test]
     fn packaged_file_prefers_executable_directory() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("workspace").join("hdd-autopilot");
+        let portable = temp.path().join("portable");
+        fs::create_dir_all(root.join(LEGACY_ARTIFACT_DIR_NAME)).unwrap();
+        fs::create_dir_all(&portable).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        fs::write(
+            root.join(LEGACY_ARTIFACT_DIR_NAME)
+                .join("mining-cuda-win-x64.exe"),
+            "artifact",
+        )
+        .unwrap();
+        fs::write(portable.join("mining-cuda-win-x64.exe"), "portable").unwrap();
+
         let got = resolve_packaged_file_path_with_sources(
             "mining-cuda-win-x64.exe",
-            Some(PathBuf::from("workspace/hdd-autopilot")),
-            Some(PathBuf::from(
-                "portable/hdd-autopilot-x86_64-pc-windows-msvc.exe",
-            )),
+            Some(root),
+            Some(portable.join("hdd-autopilot-x86_64-pc-windows-msvc.exe")),
         );
-        assert_eq!(got, PathBuf::from("portable/mining-cuda-win-x64.exe"));
+        assert_eq!(got, portable.join("mining-cuda-win-x64.exe"));
     }
 
     #[test]

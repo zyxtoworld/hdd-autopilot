@@ -29,10 +29,10 @@ pub use checkin::{
     CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse, CheckinUser,
 };
 pub use flowfree::{
-    FlowfreeConfigResponse, FlowfreeDifficultyConfig, FlowfreeEndpoint, FlowfreeFinishRequest,
-    FlowfreeFinishResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeMove,
-    FlowfreePath, FlowfreePoint, FlowfreeSession, FlowfreeStartRequest, FlowfreeStartResponse,
-    FlowfreeUser,
+    FlowfreeAbandonRequest, FlowfreeAbandonResponse, FlowfreeConfigResponse,
+    FlowfreeDifficultyConfig, FlowfreeEndpoint, FlowfreeFinishRequest, FlowfreeFinishResponse,
+    FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeMove, FlowfreePath, FlowfreePoint,
+    FlowfreeSession, FlowfreeStartRequest, FlowfreeStartResponse, FlowfreeUser,
 };
 pub use lightsout::{
     LightsoutClickRequest, LightsoutClickResponse, LightsoutConfigResponse,
@@ -59,8 +59,8 @@ pub use minesweeper::{
 };
 pub use nonogram::{
     NonogramClickRequest, NonogramClickResponse, NonogramConfigResponse, NonogramDifficultyConfig,
-    NonogramHistoryResponse, NonogramMeResponse, NonogramSession, NonogramStartRequest,
-    NonogramStartResponse, NonogramUser,
+    NonogramFinishRequest, NonogramFinishResponse, NonogramHistoryResponse, NonogramMeResponse,
+    NonogramMove, NonogramSession, NonogramStartRequest, NonogramStartResponse, NonogramUser,
 };
 pub use puzzle_15::{
     PUZZLE_15_DIFFICULTY_CLASSIC, PUZZLE_15_DIFFICULTY_EASY, PUZZLE_15_DIFFICULTY_HARD,

@@ -125,6 +125,15 @@ pub struct NonogramClickRequest {
     pub c: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NonogramMove(pub String, pub i32, pub i32);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NonogramFinishRequest {
+    pub session_id: i32,
+    pub moves: Vec<NonogramMove>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct NonogramClickResponse {
     #[serde(default)]
@@ -146,6 +155,8 @@ pub struct NonogramClickResponse {
     #[serde(default)]
     pub won: bool,
 }
+
+pub type NonogramFinishResponse = NonogramClickResponse;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct NonogramHistoryResponse {

@@ -10,17 +10,11 @@ pub struct NonogramStep {
 pub fn solve(session: &NonogramSession) -> Result<Vec<NonogramStep>, String> {
     let width = usize_from_i32(session.width, "nonogram width")?;
     let height = usize_from_i32(session.height, "nonogram height")?;
-    let solution = solve_grid(
-        width,
-        height,
-        &session.row_clues,
-        &session.col_clues,
-        &session.cells,
-    )?;
+    let solution = solve_grid(width, height, &session.row_clues, &session.col_clues, &[])?;
     let mut steps = Vec::new();
     for (r, row) in solution.iter().enumerate() {
         for (c, &filled) in row.iter().enumerate() {
-            if filled && session.cells.get(r).and_then(|line| line.get(c)).copied() != Some(1) {
+            if filled {
                 steps.push(NonogramStep {
                     action: "fill".to_string(),
                     r: r as i32,
@@ -270,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn solver_respects_already_filled_cells() {
+    fn solver_replays_all_filled_cells_for_finish() {
         let session = NonogramSession {
             width: 5,
             height: 5,
@@ -288,8 +282,8 @@ mod tests {
 
         let steps = solve(&session).unwrap();
 
-        assert_eq!(steps.len(), 14);
-        assert!(!steps.iter().any(|step| step.r == 0 && step.c == 2));
+        assert_eq!(steps.len(), 15);
+        assert!(steps.iter().any(|step| step.r == 0 && step.c == 2));
         assert!(steps.iter().all(|step| step.action == "fill"));
     }
 }
