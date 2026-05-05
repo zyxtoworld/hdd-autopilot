@@ -1,3 +1,4 @@
+pub mod arrow_out;
 pub mod flowfree;
 pub mod lightsout;
 pub mod maze;

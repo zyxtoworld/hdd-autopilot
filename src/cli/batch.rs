@@ -8,8 +8,8 @@ use crate::ui;
 use crate::workflows::common::format_amount;
 use crate::workflows::free_play::{FreeFeatureRunners, execute_all_free_features};
 use crate::workflows::{
-    checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15, puzzle_2048,
-    scratch, sheepmatch, sokoban, sudoku,
+    arrow_out, checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15,
+    puzzle_2048, scratch, sheepmatch, sokoban, sudoku,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -130,7 +130,38 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
         println!();
         let Ok(choice) = prompt_choice(
             &[
-                "1. 全自动运行所有白嫖玩法",
+                "1. 有次数限制",
+                "2. 无次数限制",
+                "3. 返回上一级菜单",
+                "4. 退出脚本",
+            ],
+            "请输入选项 (1/2/3/4): ",
+            &["1", "2", "3", "4"],
+            "1、2、3 或 4",
+            Some("3"),
+        ) else {
+            return false;
+        };
+        match choice.as_str() {
+            "1" if show_limited_free_feature_menu(config, auth_path) => return true,
+            "1" => {}
+            "2" if show_unlimited_free_feature_menu(config, auth_path) => return true,
+            "2" => {}
+            "3" => return false,
+            "4" => return true,
+            _ => {}
+        }
+    }
+}
+
+fn show_limited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+    loop {
+        render_menu_page();
+        print_account_summary(config, auth_path);
+        println!();
+        let Ok(choice) = prompt_choice(
+            &[
+                "1. 全自动运行所有有次数限制白嫖玩法",
                 "2. 自动扫雷",
                 "3. 自动羊了个羊",
                 "4. 自动谜题2048",
@@ -171,6 +202,35 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
             "13" => run_checkin_feature(config, auth_path),
             "14" => return false,
             "15" => return true,
+            _ => {}
+        }
+    }
+}
+
+fn show_unlimited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+    loop {
+        render_menu_page();
+        print_account_summary(config, auth_path);
+        println!();
+        let Ok(choice) = prompt_choice(
+            &[
+                "1. 全自动运行所有无次数限制白嫖玩法",
+                "2. 自动箭头逃离",
+                "3. 返回上一级菜单",
+                "4. 退出脚本",
+            ],
+            "请输入选项 (1/2/3/4): ",
+            &["1", "2", "3", "4"],
+            "1、2、3 或 4",
+            Some("3"),
+        ) else {
+            return false;
+        };
+        match choice.as_str() {
+            "1" => run_all_unlimited_free_features(config, auth_path),
+            "2" => run_arrow_out_feature(config, auth_path),
+            "3" => return false,
+            "4" => return true,
             _ => {}
         }
     }
@@ -526,6 +586,52 @@ fn run_sheepmatch_feature(config: &mut AuthConfig, auth_path: &Path) {
     }
 }
 
+fn run_arrow_out_feature(config: &mut AuthConfig, auth_path: &Path) {
+    run_arrow_out_with_title(config, auth_path, "自动箭头逃离");
+}
+
+fn run_all_unlimited_free_features(config: &mut AuthConfig, auth_path: &Path) {
+    run_arrow_out_with_title(config, auth_path, "全自动运行所有无次数限制白嫖玩法");
+}
+
+fn run_arrow_out_with_title(config: &mut AuthConfig, auth_path: &Path, title: &'static str) {
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始{}，本次会处理 {} 个账号；无次数限制玩法会持续运行，按 ESC 停止。",
+            title,
+            original_config.accounts.len()
+        ),
+        Some(arrow_out::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            arrow_out::run_batch_with_title(
+                original_config,
+                &run_auth_path,
+                &cancel_flag,
+                &log,
+                title,
+            )
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+            print_account_summary(config, &auth_path);
+        }
+        Ok(None) => {
+            if let Ok(latest) = load_cache(&auth_path) {
+                *config = latest;
+            }
+        }
+        Err(error) => println!("{}运行失败：{}", title, error),
+    }
+}
+
 fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
     if config.accounts.is_empty() {
         println!("当前还没有可用账号。");
@@ -536,10 +642,10 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
     let original_config = config.clone();
     match ui::run_with_escape_interrupt(
         &format!(
-            "开始全自动白嫖玩法，本次会处理 {} 个账号；每个账号会并发运行所有白嫖项目。",
+            "开始全自动运行所有有次数限制白嫖玩法，本次会处理 {} 个账号；每个账号会并发运行所有有次数限制白嫖项目。",
             original_config.accounts.len()
         ),
-        Some("全自动白嫖玩法已完成。"),
+        Some("全自动运行所有有次数限制白嫖玩法已完成。"),
         move |cancel_flag, log| {
             let checkin_log = log.clone();
             let minesweeper_log = log.clone();
@@ -699,7 +805,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
             print_account_summary(config, &auth_path);
         }
         Ok(None) => {}
-        Err(error) => println!("全自动白嫖玩法运行失败：{}", error),
+        Err(error) => println!("全自动运行所有有次数限制白嫖玩法运行失败：{}", error),
     }
 }
 

@@ -29,6 +29,9 @@ pub(super) fn api_label_for_path(path: &str) -> &'static str {
     if path.starts_with("/flowfree-api/") {
         return "连线接口";
     }
+    if path.starts_with("/arrow-out-api/") {
+        return "箭头逃离接口";
+    }
     match path {
         CHECKIN_ME_PATH | CHECKIN_TODAY_PATH | CHECKIN_CLAIM_PATH => "签到接口",
         SCRATCH_PLAY_PATH | SCRATCH_REVEAL_PATH | SCRATCH_HISTORY_PATH => "刮刮乐接口",

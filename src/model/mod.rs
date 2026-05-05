@@ -6,6 +6,7 @@ pub(crate) fn is_false(value: &bool) -> bool {
     !*value
 }
 
+mod arrow_out;
 mod auth;
 mod checkin;
 mod flowfree;
@@ -21,6 +22,12 @@ mod sheepmatch;
 mod sokoban;
 mod sudoku;
 
+pub use arrow_out::{
+    ArrowOutAbandonRequest, ArrowOutAbandonResponse, ArrowOutArrow, ArrowOutClick,
+    ArrowOutConfigResponse, ArrowOutFinishRequest, ArrowOutFinishResponse, ArrowOutHistoryResponse,
+    ArrowOutMeResponse, ArrowOutNextStage, ArrowOutObstacle, ArrowOutPoint, ArrowOutSession,
+    ArrowOutStartRequest, ArrowOutStartResponse, ArrowOutUser,
+};
 pub use auth::{
     AuthCache, AuthConfig, AuthMeData, AuthMeResponse, AuthSession, LoginRequest, LoginResponse,
     LoginResponseData, LoginUser, SessionCookie,

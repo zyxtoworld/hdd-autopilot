@@ -29,22 +29,28 @@ pub const APP_BANNER: &str = "欢迎使用号多多脚本整合工具。";
 
 const CLEAR_SCREEN_SEQUENCE: &str = "\x1b[2J\x1b[H";
 const RESET_SCROLL_SEQUENCE: &str = "\x1b[r";
-const PINNED_SCROLL_START_ROW: u16 = 5;
-const TASK_HEADER_ROWS: u16 = 4;
+const TASK_STATUS_PREFIX: &str = "\u{1e}status:";
+const PINNED_SCROLL_START_ROW: u16 = 6;
+const TASK_HEADER_ROWS: u16 = 5;
 const TASK_FOOTER_ROWS: u16 = 1;
 const MIN_TASK_VIEW_HEIGHT: u16 = TASK_HEADER_ROWS + TASK_FOOTER_ROWS + 1;
 
 #[derive(Clone)]
 pub struct TaskLog {
     write_line: Arc<dyn Fn(String) + Send + Sync>,
+    write_status: Arc<dyn Fn(String) + Send + Sync>,
 }
 
 impl TaskLog {
     pub fn stdout() -> Self {
-        Self::new(|line| {
+        let writer = Arc::new(|line: String| {
             println!("{}", line);
             let _ = io::stdout().flush();
-        })
+        });
+        Self {
+            write_line: writer.clone(),
+            write_status: writer,
+        }
     }
 
     pub fn line(&self, line: impl AsRef<str>) {
@@ -62,9 +68,19 @@ impl TaskLog {
         self.line(args.to_string());
     }
 
+    pub fn status(&self, line: impl AsRef<str>) {
+        (self.write_status)(line.as_ref().to_string());
+    }
+
+    pub fn status_fmt(&self, args: fmt::Arguments<'_>) {
+        self.status(args.to_string());
+    }
+
     pub fn prefixed(&self, prefix: impl Into<String>) -> Self {
         let parent = self.clone();
         let prefix = prefix.into();
+        let status_parent = parent.clone();
+        let status_prefix = prefix.clone();
         Self::new(move |line| {
             if line.is_empty() {
                 parent.line("");
@@ -72,11 +88,22 @@ impl TaskLog {
                 parent.line(format!("{} {}", prefix, line));
             }
         })
+        .with_status(move |line| {
+            if line.is_empty() {
+                status_parent.status("");
+            } else {
+                status_parent.status(format!("{} {}", status_prefix, line));
+            }
+        })
     }
 
     fn sender(sender: mpsc::Sender<String>) -> Self {
+        let line_sender = sender.clone();
         Self::new(move |line| {
-            let _ = sender.send(line);
+            let _ = line_sender.send(line);
+        })
+        .with_status(move |line| {
+            let _ = sender.send(format!("{TASK_STATUS_PREFIX}{line}"));
         })
     }
 
@@ -84,9 +111,19 @@ impl TaskLog {
     where
         F: Fn(String) + Send + Sync + 'static,
     {
+        let writer = Arc::new(write_line);
         Self {
-            write_line: Arc::new(write_line),
+            write_line: writer.clone(),
+            write_status: writer,
         }
+    }
+
+    fn with_status<F>(mut self, write_status: F) -> Self
+    where
+        F: Fn(String) + Send + Sync + 'static,
+    {
+        self.write_status = Arc::new(write_status);
+        self
     }
 
     fn write(&self, line: String) {
@@ -204,7 +241,7 @@ pub fn show_pinned_prompt(prompt: &str) {
     let rendered = render_prompt(prompt);
     let scroll_region = pinned_scroll_region_sequence(terminal_height());
     print!(
-        "{}{}\x1b[1;1H\x1b[2K{}\x1b[2;1H\x1b[2K\x1b[3;1H\x1b[2K{}\x1b[4;1H\x1b[2K{}\x1b[5;1H",
+        "{}{}\x1b[1;1H\x1b[2K{}\x1b[2;1H\x1b[2K\x1b[3;1H\x1b[2K{}\x1b[4;1H\x1b[2K{}\x1b[5;1H\x1b[2K\x1b[6;1H",
         CLEAR_SCREEN_SEQUENCE, RESET_SCROLL_SEQUENCE, banner, rendered, scroll_region,
     );
     let _ = io::stdout().flush();
@@ -309,6 +346,7 @@ where
     }));
 
     let mut logs = Vec::new();
+    let mut live_status = String::new();
     let mut scroll_top = 0usize;
     let mut follow_tail = true;
     let mut cancel_requested = false;
@@ -337,7 +375,7 @@ where
                 &mut follow_tail,
             );
         }
-        if drain_task_logs(&log_rx, &mut logs) {
+        if drain_task_logs(&log_rx, &mut logs, &mut live_status) {
             visual_line_count = wrapped_task_log_line_count(&logs, width as usize);
             update_scroll_after_line_count_change(
                 visual_line_count,
@@ -406,6 +444,7 @@ where
         if dirty {
             render_task_log_view(TaskLogView {
                 prompt: &prompt,
+                live_status: &live_status,
                 logs: &logs,
                 scroll_top,
                 view_height,
@@ -506,10 +545,18 @@ where
     }
 }
 
-fn drain_task_logs(receiver: &mpsc::Receiver<String>, logs: &mut Vec<String>) -> bool {
+fn drain_task_logs(
+    receiver: &mpsc::Receiver<String>,
+    logs: &mut Vec<String>,
+    live_status: &mut String,
+) -> bool {
     let mut changed = false;
     while let Ok(line) = receiver.try_recv() {
-        logs.push(line);
+        if let Some(status) = line.strip_prefix(TASK_STATUS_PREFIX) {
+            *live_status = status.to_string();
+        } else {
+            logs.push(line);
+        }
         changed = true;
     }
     changed
@@ -559,6 +606,7 @@ fn scroll_log_down(
 
 struct TaskLogView<'a> {
     prompt: &'a str,
+    live_status: &'a str,
     logs: &'a [String],
     scroll_top: usize,
     view_height: usize,
@@ -584,7 +632,8 @@ fn render_task_log_view(view: TaskLogView<'_>) -> io::Result<()> {
         width,
         &task_help_line(view.status, view.finish_message),
     )?;
-    queue_task_line(&mut stdout, 3, width, &"─".repeat(width))?;
+    queue_task_line(&mut stdout, 3, width, view.live_status)?;
+    queue_task_line(&mut stdout, 4, width, &"─".repeat(width))?;
 
     for row in 0..view.view_height {
         let terminal_row = TASK_HEADER_ROWS + row as u16;
@@ -689,12 +738,12 @@ mod tests {
 
     #[test]
     fn pinned_scroll_region_uses_terminal_bottom() {
-        assert_eq!(pinned_scroll_region_sequence(40), "\x1b[5;40r");
+        assert_eq!(pinned_scroll_region_sequence(40), "\x1b[6;40r");
     }
 
     #[test]
     fn pinned_scroll_region_clamps_small_height() {
-        assert_eq!(pinned_scroll_region_sequence(3), "\x1b[5;5r");
+        assert_eq!(pinned_scroll_region_sequence(3), "\x1b[6;6r");
     }
 
     #[test]

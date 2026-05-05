@@ -76,9 +76,7 @@ pub fn solve(session: &FlowfreeSession) -> Result<Vec<FlowfreeStep>, String> {
         }
     };
 
-    Ok(steps_from_solution(
-        session, &endpoints, width, height, solved,
-    ))
+    steps_from_solution(session, &endpoints, width, height, solved)
 }
 
 pub fn is_proven_unsolvable_error(message: &str) -> bool {
@@ -91,7 +89,9 @@ fn steps_from_solution(
     width: usize,
     height: usize,
     solved: State,
-) -> Vec<FlowfreeStep> {
+) -> Result<Vec<FlowfreeStep>, String> {
+    validate_solution(&solved, endpoints, width, height)?;
+
     let mut colors = endpoints
         .iter()
         .map(|endpoint| endpoint.color)
@@ -123,7 +123,45 @@ fn steps_from_solution(
             });
         }
     }
-    steps
+    Ok(steps)
+}
+
+fn validate_solution(
+    solved: &State,
+    endpoints: &[EndpointPlan],
+    width: usize,
+    height: usize,
+) -> Result<(), String> {
+    let mut occupied = HashMap::new();
+    for endpoint in endpoints {
+        let path = solved
+            .paths
+            .get(&endpoint.color)
+            .ok_or_else(|| "flowfree solution is missing a color path".to_string())?;
+        let path_endpoints_match = (path.first().copied() == Some(endpoint.start)
+            && path.last().copied() == Some(endpoint.end))
+            || (path.first().copied() == Some(endpoint.end)
+                && path.last().copied() == Some(endpoint.start));
+        if !path_endpoints_match {
+            return Err("flowfree solution path does not connect its endpoints".to_string());
+        }
+        for point in path {
+            point_index(*point, width, height)?;
+            let cell = solved.grid[point[0] as usize][point[1] as usize];
+            if cell != endpoint.color {
+                return Err("flowfree solution path uses a cell owned by another color".to_string());
+            }
+            if occupied.insert(*point, endpoint.color).is_some() {
+                return Err("flowfree solution path reuses a cell".to_string());
+            }
+        }
+        for pair in path.windows(2) {
+            if manhattan(pair[0], pair[1]) != 1 {
+                return Err("flowfree solution path contains a non-adjacent step".to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalized_endpoints(
@@ -367,9 +405,16 @@ fn apply_path(endpoint: &EndpointPlan, state: &mut State, path: &[FlowfreePoint]
     if path.first().copied()? != current_tip || path.last().copied()? != endpoint.end {
         return None;
     }
+    let mut previous = current_tip;
     for point in path.iter().skip(1) {
+        if manhattan(previous, *point) != 1 {
+            return None;
+        }
         let is_goal = *point == endpoint.end;
         if is_goal {
+            if state.grid[point[0] as usize][point[1] as usize] != endpoint.color {
+                return None;
+            }
             state.complete.insert(endpoint.color);
         } else {
             let cell = &mut state.grid[point[0] as usize][point[1] as usize];
@@ -379,6 +424,7 @@ fn apply_path(endpoint: &EndpointPlan, state: &mut State, path: &[FlowfreePoint]
             *cell = endpoint.color;
         }
         state.paths.get_mut(&endpoint.color)?.push(*point);
+        previous = *point;
     }
     Some(())
 }
@@ -523,14 +569,13 @@ fn legal_moves(
         if point_index(next, width, height).is_err() {
             continue;
         }
-        let is_goal = next == endpoint.end;
-        if is_goal || state.grid[next[0] as usize][next[1] as usize] == 0 {
-            moves.push((next, is_goal));
+        if can_enter_cell(endpoint, state, next) {
+            moves.push((next, next == endpoint.end));
         }
     }
     moves.sort_by_key(|(point, is_goal)| {
         (
-            shortest_distance_from(*point, endpoint.end, state, width, height)
+            shortest_distance_from(*point, endpoint.color, endpoint.end, state, width, height)
                 .unwrap_or(usize::MAX),
             open_neighbor_count(*point, endpoint, state, width, height),
             if *is_goal { 0 } else { 1 },
@@ -569,7 +614,7 @@ fn reachability_stats(
             if point_index(next, width, height).is_err() || !seen.insert(next) {
                 continue;
             }
-            if next == endpoint.end || state.grid[next[0] as usize][next[1] as usize] == 0 {
+            if can_enter_cell(endpoint, state, next) {
                 queue.push_back((next, distance + 1));
             }
         }
@@ -579,6 +624,7 @@ fn reachability_stats(
 
 fn shortest_distance_from(
     start: FlowfreePoint,
+    color: i32,
     goal: FlowfreePoint,
     state: &State,
     width: usize,
@@ -596,7 +642,7 @@ fn shortest_distance_from(
             if point_index(next, width, height).is_err() || !seen.insert(next) {
                 continue;
             }
-            if next == goal || state.grid[next[0] as usize][next[1] as usize] == 0 {
+            if can_enter_goal_or_empty(color, goal, state, next) {
                 queue.push_back((next, distance + 1));
             }
         }
@@ -631,7 +677,7 @@ fn shortest_path(
             if point_index(next, width, height).is_err() || !seen.insert(next) {
                 continue;
             }
-            if next == endpoint.end || state.grid[next[0] as usize][next[1] as usize] == 0 {
+            if can_enter_cell(endpoint, state, next) {
                 parents.insert(next, point);
                 queue.push_back(next);
             }
@@ -650,10 +696,26 @@ fn open_neighbor_count(
     DIRS.iter()
         .filter(|(dr, dc)| {
             let next = [point[0] + dr, point[1] + dc];
-            point_index(next, width, height).is_ok()
-                && (next == endpoint.end || state.grid[next[0] as usize][next[1] as usize] == 0)
+            point_index(next, width, height).is_ok() && can_enter_cell(endpoint, state, next)
         })
         .count()
+}
+
+fn can_enter_cell(endpoint: &EndpointPlan, state: &State, point: FlowfreePoint) -> bool {
+    can_enter_goal_or_empty(endpoint.color, endpoint.end, state, point)
+}
+
+fn can_enter_goal_or_empty(
+    color: i32,
+    goal: FlowfreePoint,
+    state: &State,
+    point: FlowfreePoint,
+) -> bool {
+    let cell = state.grid[point[0] as usize][point[1] as usize];
+    if point == goal {
+        return cell == color;
+    }
+    cell == 0
 }
 
 fn needs_reset(
@@ -717,6 +779,7 @@ fn point_index(point: FlowfreePoint, width: usize, height: usize) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn solver_connects_known_easy_board() {
@@ -744,6 +807,136 @@ mod tests {
         assert!(!steps.is_empty());
         assert!(steps.iter().any(|step| step.action == "paint"));
         assert!(!steps.iter().any(|step| step.action == "reset"));
+    }
+
+    #[test]
+    fn solver_outputs_adjacent_non_overlapping_same_color_paths() {
+        let session = FlowfreeSession {
+            width: 5,
+            height: 5,
+            endpoints: vec![
+                FlowfreeEndpoint(1, [0, 0], [0, 4]),
+                FlowfreeEndpoint(2, [4, 0], [4, 4]),
+                FlowfreeEndpoint(3, [2, 1], [2, 3]),
+                FlowfreeEndpoint(4, [1, 0], [3, 0]),
+            ],
+            cells: vec![
+                vec![1, 0, 0, 0, 1],
+                vec![4, 0, 0, 0, 0],
+                vec![0, 3, 0, 3, 0],
+                vec![4, 0, 0, 0, 0],
+                vec![2, 0, 0, 0, 2],
+            ],
+            ..FlowfreeSession::default()
+        };
+
+        let steps = solve(&session).unwrap();
+        assert_steps_connect_endpoints(&session, &steps);
+    }
+
+    #[test]
+    fn solver_connects_9x9_six_color_board() {
+        let session = FlowfreeSession {
+            width: 9,
+            height: 9,
+            endpoints: vec![
+                FlowfreeEndpoint(1, [0, 0], [0, 8]),
+                FlowfreeEndpoint(2, [1, 0], [1, 8]),
+                FlowfreeEndpoint(3, [2, 0], [2, 8]),
+                FlowfreeEndpoint(4, [3, 0], [3, 8]),
+                FlowfreeEndpoint(5, [4, 0], [4, 8]),
+                FlowfreeEndpoint(6, [5, 0], [5, 8]),
+            ],
+            cells: vec![
+                vec![1, 0, 0, 0, 0, 0, 0, 0, 1],
+                vec![2, 0, 0, 0, 0, 0, 0, 0, 2],
+                vec![3, 0, 0, 0, 0, 0, 0, 0, 3],
+                vec![4, 0, 0, 0, 0, 0, 0, 0, 4],
+                vec![5, 0, 0, 0, 0, 0, 0, 0, 5],
+                vec![6, 0, 0, 0, 0, 0, 0, 0, 6],
+                vec![0, 0, 0, 0, 0, 0, 0, 0, 0],
+                vec![0, 0, 0, 0, 0, 0, 0, 0, 0],
+                vec![0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ],
+            ..FlowfreeSession::default()
+        };
+
+        let steps = solve(&session).unwrap();
+        let paint_steps = steps
+            .iter()
+            .filter(|step| step.action == "paint")
+            .collect::<Vec<_>>();
+
+        assert_eq!(paint_steps.len(), 54);
+        assert_eq!(
+            paint_steps
+                .iter()
+                .map(|step| step.color)
+                .collect::<HashSet<_>>()
+                .len(),
+            6
+        );
+        for color in 1..=6 {
+            let path = paint_steps
+                .iter()
+                .filter(|step| step.color == color)
+                .map(|step| [step.r, step.c])
+                .collect::<Vec<_>>();
+            assert_eq!(path.first().copied(), Some([color - 1, 0]));
+            assert_eq!(path.last().copied(), Some([color - 1, 8]));
+            for pair in path.windows(2) {
+                assert_eq!(manhattan(pair[0], pair[1]), 1);
+            }
+        }
+        assert_steps_connect_endpoints(&session, &steps);
+    }
+
+    #[test]
+    fn solver_success_rate_9x9_six_color_generated_100_boards() {
+        const TOTAL: usize = 100;
+        let mut successes = 0usize;
+        let mut failures = Vec::new();
+        for index in 0..TOTAL {
+            let session = generated_9x9_six_color_session(index as u64);
+            match solve(&session) {
+                Ok(steps) => {
+                    assert_steps_connect_endpoints(&session, &steps);
+                    successes += 1;
+                }
+                Err(error) => failures.push((index, error)),
+            }
+        }
+
+        println!(
+            "flowfree 9x9 six-color generated success rate: {successes}/{TOTAL} ({:.1}%)",
+            successes as f64 * 100.0 / TOTAL as f64
+        );
+        assert!(failures.is_empty(), "failed generated boards: {failures:?}");
+    }
+
+    #[test]
+    fn legal_moves_enter_only_same_color_goal() {
+        let endpoint = EndpointPlan {
+            color: 1,
+            start: [0, 0],
+            end: [0, 2],
+        };
+        let wrong_goal_state = State {
+            grid: vec![vec![1, 1, 2]],
+            paths: HashMap::from([(1, vec![[0, 0], [0, 1]])]),
+            complete: HashSet::new(),
+        };
+        assert!(legal_moves(&endpoint, &wrong_goal_state, 3, 1).is_empty());
+
+        let own_goal_state = State {
+            grid: vec![vec![1, 1, 1]],
+            paths: HashMap::from([(1, vec![[0, 0], [0, 1]])]),
+            complete: HashSet::new(),
+        };
+        assert_eq!(
+            legal_moves(&endpoint, &own_goal_state, 3, 1),
+            vec![([0, 2], true)]
+        );
     }
 
     #[test]
@@ -789,21 +982,31 @@ mod tests {
     }
 
     #[test]
-    fn solver_rejects_crossed_corner_pairs() {
+    fn solver_rejects_crossed_normal_level() {
         let session = FlowfreeSession {
-            width: 5,
-            height: 5,
+            width: 7,
+            height: 7,
             endpoints: vec![
-                FlowfreeEndpoint(1, [0, 0], [4, 4]),
-                FlowfreeEndpoint(2, [0, 4], [4, 0]),
-                FlowfreeEndpoint(3, [2, 2], [1, 1]),
+                FlowfreeEndpoint(1, [0, 0], [6, 6]),
+                FlowfreeEndpoint(2, [0, 6], [6, 0]),
+                FlowfreeEndpoint(3, [2, 2], [4, 4]),
+                FlowfreeEndpoint(4, [2, 4], [4, 2]),
             ],
-            cells: vec![vec![0; 5]; 5],
+            cells: vec![
+                vec![1, 0, 0, 0, 0, 0, 2],
+                vec![0, 0, 0, 0, 0, 0, 0],
+                vec![0, 0, 3, 0, 4, 0, 0],
+                vec![0, 0, 0, 0, 0, 0, 0],
+                vec![0, 0, 4, 0, 3, 0, 0],
+                vec![0, 0, 0, 0, 0, 0, 0],
+                vec![2, 0, 0, 0, 0, 0, 1],
+            ],
             ..FlowfreeSession::default()
         };
 
-        assert!(solve(&session).is_err());
-        assert!(is_proven_unsolvable_error(&solve(&session).unwrap_err()));
+        let error = solve(&session).unwrap_err();
+
+        assert!(is_proven_unsolvable_error(&error));
         assert!(!is_proven_unsolvable_error(SEARCH_LIMIT_ERROR));
     }
 
@@ -827,5 +1030,78 @@ mod tests {
         let error = solve(&session).unwrap_err();
 
         assert!(is_proven_unsolvable_error(&error));
+    }
+
+    fn assert_steps_connect_endpoints(session: &FlowfreeSession, steps: &[FlowfreeStep]) {
+        let endpoints = session
+            .endpoints
+            .iter()
+            .map(|FlowfreeEndpoint(color, start, end)| (*color, (*start, *end)))
+            .collect::<HashMap<_, _>>();
+        let mut paths: HashMap<i32, Vec<FlowfreePoint>> = HashMap::new();
+        for step in steps.iter().filter(|step| step.action == "paint") {
+            paths.entry(step.color).or_default().push([step.r, step.c]);
+        }
+
+        let mut occupied = HashSet::new();
+        for (color, (start, end)) in endpoints {
+            let path = paths.get(&color).unwrap();
+            let endpoints_match = (path.first().copied() == Some(start)
+                && path.last().copied() == Some(end))
+                || (path.first().copied() == Some(end) && path.last().copied() == Some(start));
+            assert!(endpoints_match);
+            for pair in path.windows(2) {
+                assert_eq!(manhattan(pair[0], pair[1]), 1);
+            }
+            for point in path {
+                assert!(occupied.insert(*point));
+            }
+        }
+    }
+
+    fn generated_9x9_six_color_session(seed: u64) -> FlowfreeSession {
+        let mut rng = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let horizontal = next_seed(&mut rng).is_multiple_of(2);
+        let mut lanes = (0..9).collect::<Vec<i32>>();
+        shuffle(&mut lanes, &mut rng);
+        lanes.truncate(6);
+        let mut colors = (1..=6).collect::<Vec<i32>>();
+        shuffle(&mut colors, &mut rng);
+
+        let mut cells = vec![vec![0; 9]; 9];
+        let mut endpoints = Vec::new();
+        for (index, color) in colors.into_iter().enumerate() {
+            let lane = lanes[index];
+            let (start, end) = if horizontal {
+                ([lane, 0], [lane, 8])
+            } else {
+                ([0, lane], [8, lane])
+            };
+            cells[start[0] as usize][start[1] as usize] = color;
+            cells[end[0] as usize][end[1] as usize] = color;
+            endpoints.push(FlowfreeEndpoint(color, start, end));
+        }
+
+        FlowfreeSession {
+            width: 9,
+            height: 9,
+            endpoints,
+            cells,
+            ..FlowfreeSession::default()
+        }
+    }
+
+    fn shuffle(values: &mut [i32], seed: &mut u64) {
+        for index in (1..values.len()).rev() {
+            let swap_index = (next_seed(seed) as usize) % (index + 1);
+            values.swap(index, swap_index);
+        }
+    }
+
+    fn next_seed(seed: &mut u64) -> u64 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *seed
     }
 }

@@ -1,22 +1,25 @@
 use std::time::Duration;
 
 use crate::model::{
-    AbandonRequest, AbandonResponse, AuthMeResponse, CheckinClaimResponse, CheckinMeResponse,
-    CheckinTodayResponse, ConfigResponse, FlowfreeAbandonRequest, FlowfreeAbandonResponse,
-    FlowfreeConfigResponse, FlowfreeFinishRequest, FlowfreeFinishResponse, FlowfreeHistoryResponse,
-    FlowfreeMeResponse, FlowfreeMove, FlowfreeStartRequest, FlowfreeStartResponse, HistoryResponse,
-    LightsoutClickRequest, LightsoutClickResponse, LightsoutConfigResponse,
-    LightsoutHistoryResponse, LightsoutMeResponse, LightsoutStartRequest, LightsoutStartResponse,
-    LoginRequest, LoginResponse, MazeConfigResponse, MazeHistoryResponse, MazeMeResponse,
-    MazeMoveRequest, MazeMoveResponse, MazeStartRequest, MazeStartResponse, MemoryConfigResponse,
-    MemoryFlipRequest, MemoryFlipResponse, MemoryHistoryResponse, MemoryMeResponse,
-    MemoryStartRequest, MemoryStartResponse, MinesweeperClickRequest, MinesweeperClickResponse,
-    MinesweeperConfigResponse, MinesweeperHistoryResponse, MinesweeperMeResponse,
-    MinesweeperStartRequest, MinesweeperStartResponse, NonogramClickRequest, NonogramClickResponse,
-    NonogramConfigResponse, NonogramFinishRequest, NonogramFinishResponse, NonogramHistoryResponse,
-    NonogramMeResponse, NonogramMove, NonogramStartRequest, NonogramStartResponse,
-    Puzzle15ConfigResponse, Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest,
-    Puzzle15MoveResponse, Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
+    AbandonRequest, AbandonResponse, ArrowOutAbandonRequest, ArrowOutAbandonResponse,
+    ArrowOutClick, ArrowOutConfigResponse, ArrowOutFinishRequest, ArrowOutFinishResponse,
+    ArrowOutHistoryResponse, ArrowOutMeResponse, ArrowOutStartRequest, ArrowOutStartResponse,
+    AuthMeResponse, CheckinClaimResponse, CheckinMeResponse, CheckinTodayResponse, ConfigResponse,
+    FlowfreeAbandonRequest, FlowfreeAbandonResponse, FlowfreeConfigResponse, FlowfreeFinishRequest,
+    FlowfreeFinishResponse, FlowfreeHistoryResponse, FlowfreeMeResponse, FlowfreeMove,
+    FlowfreeStartRequest, FlowfreeStartResponse, HistoryResponse, LightsoutClickRequest,
+    LightsoutClickResponse, LightsoutConfigResponse, LightsoutHistoryResponse, LightsoutMeResponse,
+    LightsoutStartRequest, LightsoutStartResponse, LoginRequest, LoginResponse, MazeConfigResponse,
+    MazeHistoryResponse, MazeMeResponse, MazeMoveRequest, MazeMoveResponse, MazeStartRequest,
+    MazeStartResponse, MemoryConfigResponse, MemoryFlipRequest, MemoryFlipResponse,
+    MemoryHistoryResponse, MemoryMeResponse, MemoryStartRequest, MemoryStartResponse,
+    MinesweeperClickRequest, MinesweeperClickResponse, MinesweeperConfigResponse,
+    MinesweeperHistoryResponse, MinesweeperMeResponse, MinesweeperStartRequest,
+    MinesweeperStartResponse, NonogramClickRequest, NonogramClickResponse, NonogramConfigResponse,
+    NonogramFinishRequest, NonogramFinishResponse, NonogramHistoryResponse, NonogramMeResponse,
+    NonogramMove, NonogramStartRequest, NonogramStartResponse, Puzzle15ConfigResponse,
+    Puzzle15HistoryResponse, Puzzle15MeResponse, Puzzle15MoveRequest, Puzzle15MoveResponse,
+    Puzzle15StartRequest, Puzzle15StartResponse, Puzzle2048AbandonRequest,
     Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
     Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
     ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
@@ -38,23 +41,24 @@ use serde::de::DeserializeOwned;
 use super::cookies::{cookie_header_value, merge_session_cookies, normalize_session_cookies};
 use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
-    AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH, CHECKIN_ME_PATH, CHECKIN_TODAY_PATH,
-    DEFAULT_BASE_URL, DEFAULT_USER_AGENT, FLOWFREE_ABANDON_PATH, FLOWFREE_CONFIG_PATH,
-    FLOWFREE_FINISH_PATH, FLOWFREE_HISTORY_PATH, FLOWFREE_ME_PATH, FLOWFREE_START_PATH,
-    LIGHTSOUT_CLICK_PATH, LIGHTSOUT_CONFIG_PATH, LIGHTSOUT_HISTORY_PATH, LIGHTSOUT_ME_PATH,
-    LIGHTSOUT_START_PATH, LOGIN_PATH, MAZE_CONFIG_PATH, MAZE_HISTORY_PATH, MAZE_ME_PATH,
-    MAZE_MOVE_PATH, MAZE_START_PATH, MEMORY_CONFIG_PATH, MEMORY_FLIP_PATH, MEMORY_HISTORY_PATH,
-    MEMORY_ME_PATH, MEMORY_START_PATH, MINESWEEPER_CLICK_PATH, MINESWEEPER_CONFIG_PATH,
-    MINESWEEPER_HISTORY_PATH, MINESWEEPER_ME_PATH, MINESWEEPER_START_PATH, NONOGRAM_CLICK_PATH,
-    NONOGRAM_CONFIG_PATH, NONOGRAM_FINISH_PATH, NONOGRAM_HISTORY_PATH, NONOGRAM_ME_PATH,
-    NONOGRAM_START_PATH, PUZZLE_15_CONFIG_PATH, PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH,
-    PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH, PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH,
-    PUZZLE_2048_HISTORY_PATH, PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH,
-    SCRATCH_HISTORY_PATH, SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SOKOBAN_CONFIG_PATH,
-    SOKOBAN_HISTORY_PATH, SOKOBAN_ME_PATH, SOKOBAN_MOVE_PATH, SOKOBAN_START_PATH,
-    SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH, SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH,
-    TILE_ABANDON_PATH, TILE_CONFIG_PATH, TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH,
-    TILE_STEP_PATH, UnauthorizedError,
+    ARROW_OUT_ABANDON_PATH, ARROW_OUT_CONFIG_PATH, ARROW_OUT_FINISH_PATH, ARROW_OUT_HISTORY_PATH,
+    ARROW_OUT_ME_PATH, ARROW_OUT_START_PATH, AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH,
+    CHECKIN_ME_PATH, CHECKIN_TODAY_PATH, DEFAULT_BASE_URL, DEFAULT_USER_AGENT,
+    FLOWFREE_ABANDON_PATH, FLOWFREE_CONFIG_PATH, FLOWFREE_FINISH_PATH, FLOWFREE_HISTORY_PATH,
+    FLOWFREE_ME_PATH, FLOWFREE_START_PATH, LIGHTSOUT_CLICK_PATH, LIGHTSOUT_CONFIG_PATH,
+    LIGHTSOUT_HISTORY_PATH, LIGHTSOUT_ME_PATH, LIGHTSOUT_START_PATH, LOGIN_PATH, MAZE_CONFIG_PATH,
+    MAZE_HISTORY_PATH, MAZE_ME_PATH, MAZE_MOVE_PATH, MAZE_START_PATH, MEMORY_CONFIG_PATH,
+    MEMORY_FLIP_PATH, MEMORY_HISTORY_PATH, MEMORY_ME_PATH, MEMORY_START_PATH,
+    MINESWEEPER_CLICK_PATH, MINESWEEPER_CONFIG_PATH, MINESWEEPER_HISTORY_PATH, MINESWEEPER_ME_PATH,
+    MINESWEEPER_START_PATH, NONOGRAM_CLICK_PATH, NONOGRAM_CONFIG_PATH, NONOGRAM_FINISH_PATH,
+    NONOGRAM_HISTORY_PATH, NONOGRAM_ME_PATH, NONOGRAM_START_PATH, PUZZLE_15_CONFIG_PATH,
+    PUZZLE_15_HISTORY_PATH, PUZZLE_15_ME_PATH, PUZZLE_15_MOVE_PATH, PUZZLE_15_START_PATH,
+    PUZZLE_2048_ABANDON_PATH, PUZZLE_2048_CONFIG_PATH, PUZZLE_2048_HISTORY_PATH,
+    PUZZLE_2048_ME_PATH, PUZZLE_2048_MOVE_PATH, PUZZLE_2048_START_PATH, SCRATCH_HISTORY_PATH,
+    SCRATCH_PLAY_PATH, SCRATCH_REVEAL_PATH, SOKOBAN_CONFIG_PATH, SOKOBAN_HISTORY_PATH,
+    SOKOBAN_ME_PATH, SOKOBAN_MOVE_PATH, SOKOBAN_START_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH,
+    SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH,
+    TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
 };
 
 impl ApiClient {
@@ -175,6 +179,92 @@ impl ApiClient {
             auth_token,
             &(self.base_url.clone() + "/checkin"),
             Some(&serde_json::json!({})),
+        )
+    }
+
+    pub fn get_arrow_out_config(
+        &self,
+        auth_token: &str,
+    ) -> Result<ArrowOutConfigResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            ARROW_OUT_CONFIG_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Option::<&()>::None,
+        )
+    }
+
+    pub fn get_arrow_out_me(&self, auth_token: &str) -> Result<ArrowOutMeResponse, ApiError> {
+        let response: ArrowOutMeResponse = self.get_json(
+            Method::GET,
+            ARROW_OUT_ME_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Option::<&()>::None,
+        )?;
+        if !response.ok {
+            return Err(ApiError::Message(
+                "get arrow-out account info returned ok=false".to_string(),
+            ));
+        }
+        Ok(response)
+    }
+
+    pub fn start_arrow_out(&self, auth_token: &str) -> Result<ArrowOutStartResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            ARROW_OUT_START_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Some(&ArrowOutStartRequest {}),
+        )
+    }
+
+    pub fn finish_arrow_out(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+        clicks: Vec<ArrowOutClick>,
+        result: &str,
+    ) -> Result<ArrowOutFinishResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            ARROW_OUT_FINISH_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Some(&ArrowOutFinishRequest {
+                clicks,
+                result: result.to_string(),
+                session_id,
+            }),
+        )
+    }
+
+    pub fn abandon_arrow_out(
+        &self,
+        auth_token: &str,
+        session_id: i32,
+    ) -> Result<ArrowOutAbandonResponse, ApiError> {
+        self.get_json(
+            Method::POST,
+            ARROW_OUT_ABANDON_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Some(&ArrowOutAbandonRequest { session_id }),
+        )
+    }
+
+    pub fn get_arrow_out_history(
+        &self,
+        auth_token: &str,
+    ) -> Result<ArrowOutHistoryResponse, ApiError> {
+        self.get_json(
+            Method::GET,
+            ARROW_OUT_HISTORY_PATH,
+            auth_token,
+            &(self.base_url.clone() + "/arrow-out"),
+            Option::<&()>::None,
         )
     }
 

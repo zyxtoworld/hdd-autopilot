@@ -7,8 +7,9 @@
 - 自动挖矿：支持邀请码、余额兑换码两类奖励，支持邀请码优先、余额码优先、只挖邀请码、只挖余额码四种模式。
 - CPU + GPU 自动调优挖矿：CPU 始终可用；GPU 后端按平台尝试 CUDA、OpenCL、Metal，并根据真实 HTTP challenge 参数和设备参数自动筛选最优配置。
 - 多账号缓存：添加账号时登录并保存账号状态，后续任务会按 cookies、token、密码重登的顺序恢复登录。
-- 白嫖玩法：自动签到、扫雷、羊了个羊、谜题 2048、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独。
-- 全自动白嫖：对每个账号并发运行所有白嫖玩法，最后合并账号状态并保存。
+- 有次数限制白嫖玩法：自动签到、扫雷、羊了个羊、谜题 2048、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独。
+- 无次数限制白嫖玩法：自动箭头逃离；运行中固定显示所有账号实时总收益，按 `ESC` 停止。
+- 全自动白嫖：有次数限制玩法会对每个账号并发运行所有项目；无次数限制玩法会持续运行当前菜单下所有项目。
 - 赌狗玩法：自动随机刮刮乐。
 - 任务日志视图：长任务在 CLI 内显示可滚动日志，运行中可按 `ESC` 请求停止。
 - 发布工具：本地脚本和 GitHub Actions 都按规范 target triple 输出跨平台包。
@@ -67,7 +68,9 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 
 脚本功能分为：
 
-- 白嫖玩法：全自动运行所有白嫖玩法、自动扫雷、自动羊了个羊、自动谜题 2048、自动推箱子、自动点灯、自动迷宫、自动数织、自动连线、自动记忆翻牌、自动华容道、自动数独、自动签到。
+- 白嫖玩法：
+  - 有次数限制：全自动运行所有有次数限制白嫖玩法、自动扫雷、自动羊了个羊、自动谜题 2048、自动推箱子、自动点灯、自动迷宫、自动数织、自动连线、自动记忆翻牌、自动华容道、自动数独、自动签到。
+  - 无次数限制：全自动运行所有无次数限制白嫖玩法、自动箭头逃离。
 - 赌狗玩法：自动随机刮刮乐。
 
 ## 挖矿逻辑
@@ -111,6 +114,7 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 - 玩法会按各自接口读取配置和 `/me` 账号状态；免费玩法的剩余次数使用 `daily_plays_remaining` / `daily_plays_used` 或开局响应里的剩余字段，不用 history 条数倒推。
 - 如果 `/me` 返回未完成残局，会先继续残局，再按玩法策略开新局。
 - 单局失败不会阻止后续次数；只要接口仍允许继续开局，就继续运行。
+- 无次数限制玩法不会自动停在每日次数上限，运行中固定显示所有账号实时总收益，按 `ESC` 停止。
 - 网络错误、408、425、429、5xx 等临时错误会按上限重试。
 - `pending`、`running`、`active` 只表示进行中，不会记为成功或失败。
 
@@ -128,6 +132,7 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 - 自动记忆翻牌：记录已知卡牌，优先消除已知对子，避免刚失败的组合。
 - 自动华容道：校验可解性并使用搜索结果按步提交移动。
 - 自动数独：求解完整棋盘，提交空格或可编辑错误格。
+- 自动箭头逃离：读取 `/arrow-out-api/me` 的当前局或新开局，按箭头身体占用、障碍物和出口方向计算可清除顺序，结算时提交完整点击序列；单独运行和无次数限制全自动都会固定显示所有账号实时总收益。
 - 自动随机刮刮乐：补结算历史未开奖轮次，再随机选择玩法直到当天次数用完。
 
 ## 运行数据
@@ -154,6 +159,7 @@ var/
     memory/<sanitized-email>.log
     puzzle_15/<sanitized-email>.log
     sudoku/<sanitized-email>.log
+    arrow_out/<sanitized-email>.log
 ```
 
 兼容性说明：
@@ -254,10 +260,10 @@ Windows 批量菜单 smoke：
 powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1
 ```
 
-默认 smoke 会构建并驱动 `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`，覆盖主要批量菜单路径。需要额外覆盖刮刮乐、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道和数独独立入口时：
+默认 smoke 会构建并驱动 `dist/hdd-autopilot-x86_64-pc-windows-msvc.exe`，覆盖主要批量菜单路径。需要额外覆盖刮刮乐、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独和箭头逃离独立入口时：
 
 ```powershell
-powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false -SkipMemory:$false -SkipPuzzle15:$false -SkipSudoku:$false
+powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -SkipScratch:$false -SkipMemory:$false -SkipPuzzle15:$false -SkipSudoku:$false -SkipArrowOut:$false
 ```
 
 ## 项目结构
@@ -269,7 +275,7 @@ hdd-autopilot/
     cli/         CLI 菜单、账号添加、功能入口
     model/       API DTO 和难度/玩法常量
     runtime/     var/dist/artifacts 路径解析和旧数据迁移
-    solver/      2048、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独求解器
+    solver/      2048、扫雷、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独、箭头逃离求解器
     storage/     账号缓存读写、归一化和旧格式兼容
     ui/          终端日志视图、滚动、ESC 中断
     workflows/   签到、刮刮乐、各自动玩法和全自动调度

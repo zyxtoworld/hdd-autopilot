@@ -584,6 +584,12 @@ fn localized_retry_operation(operation: &str) -> &'static str {
         "sudoku history" => "数独历史接口",
         "sudoku start" => "数独开局接口",
         "sudoku fill" => "数独填数接口",
+        "arrow-out config" => "箭头逃离配置接口",
+        "arrow-out me" => "箭头逃离账号状态接口",
+        "arrow-out history" => "箭头逃离历史接口",
+        "arrow-out start" => "箭头逃离开局接口",
+        "arrow-out finish" => "箭头逃离结算接口",
+        "arrow-out abandon" => "箭头逃离放弃接口",
         _ => "接口",
     }
 }
