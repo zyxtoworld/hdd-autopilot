@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{
     Puzzle15ConfigResponse, Puzzle15MoveResponse, Puzzle15Session, Puzzle15StartResponse,
@@ -10,12 +10,15 @@ use crate::solver::puzzle_15;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{
     Puzzle15DifficultySummary, Puzzle15RoundSummary, Puzzle15Snapshot, RoundProgress,
 };
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn difficulty_order(config: &Puzzle15ConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -81,6 +84,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &snapshot,
             snapshot.session_id,
             direction.as_api_str(),
             snapshot.move_count + 1,
@@ -117,18 +121,87 @@ fn move_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &Puzzle15Snapshot,
     session_id: i32,
     direction: &str,
     step_number: i32,
 ) -> io::Result<Puzzle15MoveResponse> {
     let operation = retry_operation_with_step("puzzle15 move", step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         &operation,
         |client, auth_token| client.move_puzzle_15(auth_token, session_id, direction),
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &Puzzle15Snapshot,
+) -> io::Result<Option<Puzzle15Session>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle15 me",
+        |client, auth_token| client.get_puzzle_15_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle15 history",
+        |client, auth_token| client.get_puzzle_15_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &Puzzle15Snapshot, session: &Puzzle15Session) -> bool {
+    session.session_id == previous.session_id
+        && (!is_pending_session(session)
+            || session.move_count > previous.move_count
+            || session.board != previous.board)
+}
+
+fn response_from_session(session: Puzzle15Session) -> Puzzle15MoveResponse {
+    let won = session.won || session.status.trim().eq_ignore_ascii_case("won");
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    Puzzle15MoveResponse {
+        board: session.board.clone(),
+        move_count: session.move_count,
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        won,
+        session,
+        ..Puzzle15MoveResponse::default()
+    }
 }
 
 pub(super) fn snapshot_from_start_response(start: &Puzzle15StartResponse) -> Puzzle15Snapshot {

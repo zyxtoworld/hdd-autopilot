@@ -6,7 +6,7 @@
 
 - 自动挖矿：支持邀请码、余额兑换码两类奖励，支持邀请码优先、余额码优先、只挖邀请码、只挖余额码四种模式。
 - CPU + GPU 自动调优挖矿：CPU 始终可用；GPU 后端按平台尝试 CUDA、OpenCL、Metal，并根据真实 HTTP challenge 参数和设备参数自动筛选最优配置。
-- 多账号缓存：添加账号时登录并保存账号状态，后续任务会按 cookies、token、密码重登的顺序恢复登录。
+- 多账号缓存：添加账号时登录并保存 token；后续需要登录的接口统一使用 `Authorization` token。
 - 有次数限制的白嫖玩法：自动签到、扫雷、羊了个羊、谜题 2048、推箱子、点灯、迷宫、数织、连线、记忆翻牌、华容道、数独。
 - 无次数限制的白嫖玩法：自动箭头逃离；运行中固定显示所有账号实时总收益，按 `ESC` 停止。
 - 全自动入口：有次数限制的白嫖玩法会对每个账号并发运行所有项目；无次数限制的白嫖玩法会持续运行当前菜单下所有项目。
@@ -105,24 +105,28 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 
 ## 多账号与自动玩法
 
-账号保存在 `var/data/auth.json`。添加账号会保存邮箱、密码、token 和 session cookies，用于后续自动恢复登录状态。该文件包含敏感信息，已被 `.gitignore` 排除，不要手动提交。
+账号保存在 `var/data/auth.json`。添加账号会保存邮箱、密码和 token，用于后续自动恢复登录状态。该文件包含敏感信息，已被 `.gitignore` 排除，不要手动提交。
 
 白嫖玩法通用策略：
 
 - 任务按账号并发执行。
-- 每个账号先恢复登录状态，必要时自动重登并更新缓存。
-- 运行中接口返回 401 或登录状态失效时，会自动重登一次并继续当前玩法。
+- 每个账号先恢复登录状态；缓存里的 token 可用时直接复用，token 失效或缺失时会自动重登并更新缓存。
+- 所有需要登录的接口调用都会带 `Authorization` token。
+- 运行中接口返回 401 或登录状态失效时，会自动重登一次，刷新 token 后继续当前玩法。
+- 账号缓存不保存业务登录 Cookie；旧缓存里的 Cookie 字段会被忽略，后续保存时写回 token-only 格式。挖矿模块内部的矿池 HTTP 会话保持原有行为，不写入 `auth.json`。
 - 总调度层分为 `workflows/limited_free_play.rs` 和 `workflows/unlimited_free_play.rs`；单个玩法模块只负责自己的接口、求解器、日志和账号状态合并。
 - 玩法会按各自接口读取配置和 `/me` 账号状态；免费玩法的剩余次数使用 `daily_plays_remaining` / `daily_plays_used` 或开局响应里的剩余字段，不用 history 条数倒推。
 - 如果 `/me` 返回未完成残局，会先继续残局，再按玩法策略开新局。
 - 单局失败不会阻止后续次数；只要接口仍允许继续开局，就继续运行。
 - 无次数限制的白嫖玩法不会自动停在每日次数上限，运行中固定显示所有账号实时总收益，按 `ESC` 停止。
-- 网络错误、408、425、429、5xx 等临时错误会按上限重试。
+- 网络错误、408、425、429、5xx 等临时错误会按统一上限重试；400、403、404、409、422 等状态会按统一中文原因记录。
+- 结算、点击、移动、填数、翻牌等会改变服务端状态的接口如果遇到超时、5xx、409 或响应丢失，会先回查 `/me` 和 `/history` 的同一对局状态；确认服务端已经推进后直接合并服务端快照继续，避免重复提交同一步或重复结算。
+- 单个玩法如果多次重新进入仍无法恢复，会停止该玩法/账号任务并记录原因，避免无法处理的异常阻塞线程。
 - `pending`、`running`、`active` 只表示进行中，不会记为成功或失败。
 
 当前自动玩法：
 
-- 自动签到：按网站流程检查账号和今日状态，未签到时领取奖励并记录余额变化；如果领取接口临时返回 5xx / 502，会记录本次签到失败并继续后续玩法，不会卡住全自动流程。
+- 自动签到：按网站流程检查账号和今日状态，未签到时领取奖励并记录余额变化；登录会复用并持久化 `auth.json` 中的 token；如果接口临时异常，会按通用重试策略处理，仍失败则记录本次签到失败并继续后续玩法，不会卡住全自动流程。
 - 自动扫雷：使用错旗修复、确定性规则、子集/重叠约束和全局雷数加权概率枚举求解；先续 `/me` 返回的当前残局，再按接口奖励从高到低开新局；如果接口返回剩余次数字段会优先使用，否则不依赖只返回最近 12 局的 history，改为直到接口拒绝继续开局。
 - 自动羊了个羊：按 `/me.daily_plays_remaining` 分难度处理剩余次数，使用 `/me.active_session` 续残局，并用接口快照推进固定点击队列。
 - 自动谜题 2048：支持 3x3 / 4x4 / 5x5，使用合法移动枚举和 expectimax 策略求解。
@@ -135,7 +139,7 @@ chmod +x dist/hdd-autopilot-x86_64-unknown-linux-gnu
 - 自动华容道：校验可解性并使用搜索结果按步提交移动。
 - 自动数独：求解完整棋盘，提交空格或可编辑错误格。
 - 自动箭头逃离：读取 `/arrow-out-api/me` 的当前局或新开局，按箭头身体占用、障碍物和出口方向计算可清除顺序，结算时提交完整点击序列；单独运行和无次数限制全自动都会固定显示所有账号实时总收益。
-- 自动随机刮刮乐：补结算历史未开奖轮次，再随机选择玩法直到当天次数用完。
+- 自动随机刮刮乐：补结算历史未开奖轮次，再随机选择玩法直到当天次数用完；开奖请求如果响应丢失，会回查历史确认是否已经开奖。
 
 ## 运行数据
 
@@ -149,24 +153,29 @@ var/
       invite-codes.txt
       balance-codes.txt
   log/
-    checkin/checkin.log
-    scratch/<sanitized-email>.log
-    sheepmatch/<sanitized-email>.log
-    puzzle_2048/<sanitized-email>.log
-    sokoban/<sanitized-email>.log
-    lightsout/<sanitized-email>.log
-    maze/<sanitized-email>.log
-    nonogram/<sanitized-email>.log
-    flowfree/<sanitized-email>.log
-    memory/<sanitized-email>.log
-    puzzle_15/<sanitized-email>.log
-    sudoku/<sanitized-email>.log
-    arrow_out/<sanitized-email>.log
+    YYYYMMDD/
+      checkin/checkin.log
+      scratch/<sanitized-email>.log
+      sheepmatch/<sanitized-email>.log
+      puzzle_2048/<sanitized-email>.log
+      sokoban/<sanitized-email>.log
+      lightsout/<sanitized-email>.log
+      maze/<sanitized-email>.log
+      nonogram/<sanitized-email>.log
+      flowfree/<sanitized-email>.log
+      memory/<sanitized-email>.log
+      puzzle_15/<sanitized-email>.log
+      sudoku/<sanitized-email>.log
+      arrow_out/<sanitized-email>.log
 ```
 
 兼容性说明：
 
 - 启动时会尝试把旧版根目录数据迁移到 `var/data/`。
+- 各玩法日志和挖矿奖励码保存日志按系统当前时区记录时间戳，并先分 `YYYYMMDD` 日期目录，再分项目目录；除签到外，每个项目目录下继续按账号拆分日志文件。
+- 日志时间使用系统本地 UTC 偏移格式化；读取失败时回退到 UTC，避免因时区环境异常阻塞任务或影响跨平台构建。
+- 登录状态校验接口会随请求传入系统当前 IANA 时区；macOS 优先读取 `TZ` 或 `systemsetup -gettimezone`，其他平台读取系统时区数据库，无法识别时回退到 `Etc/UTC`。
+- 所有需要登录的玩法共用同一套登录态恢复逻辑：先加载并验证 `auth.json` 中的 token，验证通过后回写最新登录态；旧缓存如果缺 token，会用账号密码重新登录。
 - `auth.json` 兼容旧单账号格式和旧 `sessions` 字段，保存时会写回当前扁平格式。
 - `dist/`、`target/`、`var/`、`artifacts/`、native build 目录和本地 smoke 产物都被 `.gitignore` 排除。
 
@@ -200,6 +209,13 @@ bash scripts/release.sh
 - `built`：完整包构建成功。
 - `built_degraded`：基础包构建成功，但可选 GPU 原生后端缺环境或构建失败。
 - `failed`：基础构建失败。
+
+本地打包说明：
+
+- Windows 本机可以用 `scripts\release.bat` 汇总构建 Windows、macOS 和 Linux 基础包。
+- 非目标平台构建时，可选 GPU 原生后端可能缺少目标平台 SDK、驱动或 headers，脚本会保留基础包并写 `built_degraded`。
+- 要得到 `built` 完整包，需要在对应平台/Runner 上具备原生 GPU 构建环境：Windows CUDA/OpenCL、macOS Metal/OpenCL、Linux CUDA/OpenCL。
+- macOS 交叉构建可能出现 `xcrun`/SDK warning；只要最终状态文件不是 `failed`，基础包已经生成。
 
 GitHub Actions：
 
@@ -273,7 +289,7 @@ powershell -NoLogo -ExecutionPolicy Bypass -File scripts/smoke-batch-menu.ps1 -S
 ```text
 hdd-autopilot/
   src/
-    api/         HTTP client、cookies、接口路径和错误文案
+    api/         HTTP client、接口路径和错误文案
     cli/         CLI 菜单、账号添加、功能入口
     model/       API DTO 和难度/玩法常量
     runtime/     var/dist/artifacts 路径解析和旧数据迁移
@@ -297,6 +313,6 @@ hdd-autopilot/
 
 ## 安全注意
 
-- 不要提交 `var/data/auth.json`，里面可能包含邮箱、密码、access token 和 cookies。
+- 不要提交 `var/data/auth.json`，里面可能包含邮箱、密码和 access token。
 - 不要提交 `dist/`、`target/`、native build 目录或日志文件。
 - 公开仓库前可用关键词扫描检查是否误提交真实账号、token、私钥或 `.env`。

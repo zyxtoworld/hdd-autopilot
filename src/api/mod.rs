@@ -1,15 +1,14 @@
 mod client;
-mod cookies;
 mod endpoints;
 
 use std::fmt;
-use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
-use crate::model::SessionCookie;
 use reqwest::blocking::Client;
 
 pub const DEFAULT_BASE_URL: &str = "https://sub.hdd.sb";
-pub const AUTH_ME_PATH: &str = "/api/v1/auth/me?timezone=Asia%2FShanghai";
+pub const AUTH_ME_PATH: &str = "/api/v1/auth/me";
 pub const LOGIN_PATH: &str = "/api/v1/auth/login";
 pub const CHECKIN_ME_PATH: &str = "/checkin-api/me";
 pub const CHECKIN_TODAY_PATH: &str = "/checkin-api/today";
@@ -84,6 +83,62 @@ pub const SUDOKU_START_PATH: &str = "/sudoku-api/start";
 pub const SUDOKU_FILL_PATH: &str = "/sudoku-api/fill";
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0";
 
+pub fn auth_me_path() -> String {
+    auth_me_path_for_timezone(&system_timezone_name())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_timezone_name() -> String {
+    iana_time_zone::get_timezone()
+        .ok()
+        .filter(|timezone| !timezone.trim().is_empty())
+        .unwrap_or_else(|| "Etc/UTC".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn system_timezone_name() -> String {
+    std::env::var("TZ")
+        .ok()
+        .and_then(|timezone| normalize_timezone_name(&timezone))
+        .or_else(macos_system_timezone_name)
+        .unwrap_or_else(|| "Etc/UTC".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_system_timezone_name() -> Option<String> {
+    let output = Command::new("systemsetup")
+        .arg("-gettimezone")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let timezone = stdout
+        .trim()
+        .strip_prefix("Time Zone:")
+        .unwrap_or(stdout.trim());
+    normalize_timezone_name(timezone)
+}
+
+#[cfg(target_os = "macos")]
+fn normalize_timezone_name(timezone: &str) -> Option<String> {
+    let timezone = timezone.trim();
+    (!timezone.is_empty()).then(|| timezone.to_string())
+}
+
+fn auth_me_path_for_timezone(timezone: &str) -> String {
+    let timezone = timezone.trim();
+    let timezone = if timezone.is_empty() {
+        "Etc/UTC"
+    } else {
+        timezone
+    };
+    let encoded_timezone =
+        url::form_urlencoded::byte_serialize(timezone.as_bytes()).collect::<String>();
+    format!("{AUTH_ME_PATH}?timezone={encoded_timezone}")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnauthorizedError {
     message: String,
@@ -139,5 +194,25 @@ pub use self::client::{is_http_status, is_unauthorized};
 pub struct ApiClient {
     base_url: String,
     http_client: Client,
-    session_cookies: Arc<Mutex<Vec<SessionCookie>>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_me_path_encodes_system_timezone_name() {
+        assert_eq!(
+            auth_me_path_for_timezone("America/New_York"),
+            "/api/v1/auth/me?timezone=America%2FNew_York"
+        );
+    }
+
+    #[test]
+    fn auth_me_path_falls_back_when_timezone_is_empty() {
+        assert_eq!(
+            auth_me_path_for_timezone("   "),
+            "/api/v1/auth/me?timezone=Etc%2FUTC"
+        );
+    }
 }

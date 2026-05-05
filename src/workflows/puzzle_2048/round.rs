@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{
     Puzzle2048ConfigResponse, Puzzle2048HistoryItem, Puzzle2048MoveResponse,
@@ -11,10 +11,13 @@ use crate::solver::puzzle_2048::{self, DEFAULT_DIRECTIONS, Direction};
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{PuzzleDifficultySummary, PuzzleRoundSummary, PuzzleSnapshot, RoundProgress};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn difficulty_order(config: &Puzzle2048ConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -98,6 +101,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &snapshot,
             snapshot.session_id,
             direction,
             snapshot.move_count + 1,
@@ -146,6 +150,7 @@ pub(super) fn play_round(
                             cancel_flag,
                             state,
                             runtime,
+                            &snapshot,
                             snapshot.session_id,
                             alt,
                             snapshot.move_count + 1,
@@ -250,12 +255,14 @@ fn move_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &PuzzleSnapshot,
     session_id: i32,
     direction: Direction,
     step_number: i32,
 ) -> io::Result<Puzzle2048MoveResponse> {
     let operation = retry_operation_with_step("puzzle2048 move", step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
@@ -263,7 +270,85 @@ fn move_once(
         |client, auth_token| {
             client.move_puzzle_2048(auth_token, session_id, direction.as_api_str())
         },
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|item| item.map(|item| response_from_history_item(&previous, item, direction)))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &PuzzleSnapshot,
+) -> io::Result<Option<Puzzle2048HistoryItem>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle2048 me",
+        |client, auth_token| client.get_puzzle_2048_me(auth_token),
+    )?;
+    if let Some(item) = me.active_session {
+        if is_progressed_item(previous, &item) {
+            return Ok(Some(item));
+        }
+        if item.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "puzzle2048 history",
+        |client, auth_token| client.get_puzzle_2048_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|item| is_progressed_item(previous, item)))
+}
+
+fn is_progressed_item(previous: &PuzzleSnapshot, item: &Puzzle2048HistoryItem) -> bool {
+    item.session_id == previous.session_id
+        && (!is_pending_item(item)
+            || item.move_count > previous.move_count
+            || item.board != previous.board)
+}
+
+fn response_from_history_item(
+    previous: &PuzzleSnapshot,
+    item: Puzzle2048HistoryItem,
+    direction: Direction,
+) -> Puzzle2048MoveResponse {
+    let won = item.won || item.max_tile >= item.target_tile && item.target_tile > 0;
+    let status = if item.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        item.status.clone()
+    };
+    Puzzle2048MoveResponse {
+        board: item.board.clone(),
+        changed: item.move_count > previous.move_count || item.board != previous.board,
+        direction: direction.as_api_str().to_string(),
+        ended_at_ms: item.ended_at_ms,
+        game_over: item.game_over,
+        max_tile: item.max_tile,
+        move_count: item.move_count,
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: item.reward_amount,
+        score: item.score,
+        server_seed: item.server_seed.clone(),
+        spawned: item.last_spawn.clone(),
+        status,
+        won,
+        ..Puzzle2048MoveResponse::default()
+    }
 }
 
 struct RoundFailure<'a> {

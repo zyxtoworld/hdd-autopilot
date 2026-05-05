@@ -58,7 +58,7 @@ pub fn save_cache(path: impl AsRef<Path>, config: AuthConfig) -> io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AuthSession, LoginResponse, SessionCookie};
+    use crate::model::{AuthSession, LoginResponse};
     use crate::storage::{cache_from_login, get_session, upsert_account};
     use tempfile::tempdir;
 
@@ -93,13 +93,6 @@ mod tests {
                 password: "pw".to_string(),
                 token_type: "bearer".to_string(),
                 access_token: "token-a".to_string(),
-                cookies: vec![SessionCookie {
-                    name: "session".to_string(),
-                    value: "cookie-a".to_string(),
-                    domain: "sub.hdd.sb".to_string(),
-                    path: "/".to_string(),
-                    ..SessionCookie::default()
-                }],
                 ..AuthCache::default()
             }],
         };
@@ -116,8 +109,6 @@ mod tests {
         assert!(account.sessions.is_empty());
         assert_eq!(account.token_type, "Bearer");
         assert_eq!(account.access_token, "token-a");
-        assert_eq!(account.cookies.len(), 1);
-        assert_eq!(account.cookies[0].value, "cookie-a");
 
         let session = get_session(account, &loaded.base_url).unwrap();
         assert_eq!(session.base_url, "https://sub.hdd.sb");
@@ -132,11 +123,6 @@ mod tests {
                 base_url: "https://staging.example.com/".to_string(),
                 token_type: "bearer".to_string(),
                 access_token: "staging-token-new".to_string(),
-                cookies: vec![SessionCookie {
-                    name: "session".to_string(),
-                    value: "cookie-new".to_string(),
-                    ..SessionCookie::default()
-                }],
             }],
             ..AuthCache::default()
         };
@@ -146,7 +132,6 @@ mod tests {
         assert_eq!(config.accounts.len(), 1);
         let session = get_session(&config.accounts[0], &config.base_url).unwrap();
         assert_eq!(session.access_token, "staging-token-new");
-        assert_eq!(session.cookies.len(), 1);
     }
 
     #[test]
@@ -176,10 +161,7 @@ mod tests {
         {
           "base_url": "https://prod.example.com/",
           "token_type": "bearer",
-          "access_token": "prod-token",
-          "cookies": [
-            {"name": "session", "value": "cookie-prod", "path": "/"}
-          ]
+          "access_token": "prod-token"
         }
       ]
     }
@@ -194,8 +176,6 @@ mod tests {
         let account = &config.accounts[0];
         assert!(account.sessions.is_empty());
         assert_eq!(account.access_token, "prod-token");
-        assert_eq!(account.cookies.len(), 1);
-        assert_eq!(account.cookies[0].value, "cookie-prod");
     }
 
     #[test]
@@ -214,23 +194,10 @@ mod tests {
         )
         .unwrap();
 
-        let account = cache_from_login(
-            &login,
-            "fallback@example.com",
-            "pw",
-            "HTTPS://SUB.HDD.SB/",
-            vec![SessionCookie {
-                name: "session".to_string(),
-                value: "cookie-a".to_string(),
-                domain: "sub.hdd.sb".to_string(),
-                path: "/".to_string(),
-                ..SessionCookie::default()
-            }],
-        );
+        let account = cache_from_login(&login, "fallback@example.com", "pw", "HTTPS://SUB.HDD.SB/");
 
         assert_eq!(account.email, "demo@example.com");
         assert_eq!(account.token_type, "Bearer");
         assert_eq!(account.access_token, "token-a");
-        assert_eq!(account.cookies.len(), 1);
     }
 }

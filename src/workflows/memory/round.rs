@@ -1,17 +1,20 @@
 use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{MemoryConfigResponse, MemoryFlipResponse, MemorySession, MemoryStartResponse};
 use crate::solver::memory::MemorySolver;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{MemoryDifficultySummary, MemoryRoundSummary, MemorySnapshot, RoundProgress};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn difficulty_order(config: &MemoryConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -105,6 +108,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &snapshot,
             snapshot.session_id,
             index,
             snapshot.peek_count + 1,
@@ -163,25 +167,109 @@ fn flip_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &MemorySnapshot,
     session_id: i32,
     index: i32,
     step_number: i32,
 ) -> io::Result<MemoryFlipResponse> {
     let operation = retry_operation_with_step("memory flip", step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         &operation,
         |client, auth_token| client.flip_memory(auth_token, session_id, index),
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(|session| response_from_session(session, index)))
+        },
+        is_state_conflict_api_error,
     )
 }
 
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &MemorySnapshot,
+) -> io::Result<Option<MemorySession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "memory me",
+        |client, auth_token| client.get_memory_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "memory history",
+        |client, auth_token| client.get_memory_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &MemorySnapshot, session: &MemorySession) -> bool {
+    session.session_id == previous.session_id
+        && (!is_pending_session(session)
+            || session.peek_count > previous.peek_count
+            || session.match_count > previous.match_count
+            || session.matched_indices != previous.matched_indices
+            || session.currently_revealed != previous.currently_revealed)
+}
+
+fn response_from_session(session: MemorySession, attempted_index: i32) -> MemoryFlipResponse {
+    let revealed = session.currently_revealed.clone();
+    let card = revealed
+        .iter()
+        .find(|card| card.index == attempted_index)
+        .cloned();
+    let won = session.won || session.pairs > 0 && session.match_count >= session.pairs;
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    MemoryFlipResponse {
+        currently_revealed: revealed,
+        game_over: session.game_over,
+        index: card.as_ref().map(|card| card.index).unwrap_or(-1),
+        symbol: card.as_ref().map(|card| card.symbol).unwrap_or_default(),
+        match_count: session.match_count,
+        matched_indices: session.matched_indices.clone(),
+        matched_symbols: session.matched_symbols.clone(),
+        ok: true,
+        peek_count: session.peek_count,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        session,
+        status,
+        won,
+        ..MemoryFlipResponse::default()
+    }
+}
+
 fn remember_flip_response(solver: &mut MemorySolver, response: &MemoryFlipResponse) {
-    solver.remember(&crate::model::MemoryCard {
-        index: response.index,
-        symbol: response.symbol,
-    });
+    if response.index >= 0 {
+        solver.remember(&crate::model::MemoryCard {
+            index: response.index,
+            symbol: response.symbol,
+        });
+    }
     if let Some(other) = &response.other {
         solver.remember(other);
     }

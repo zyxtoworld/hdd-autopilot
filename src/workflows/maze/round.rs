@@ -1,16 +1,19 @@
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{MazeConfigResponse, MazeMoveResponse, MazeSession};
 use crate::solver::maze;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{MazeDifficultySummary, MazeRoundSummary, RoundProgress};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn is_pending_session(session: &MazeSession) -> bool {
     if session.session_id <= 0 || session.ended_at_ms.is_some() || session.won {
@@ -70,6 +73,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &session,
             StepAttempt {
                 session_id: session.session_id,
                 direction,
@@ -125,16 +129,83 @@ fn step_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &MazeSession,
     attempt: StepAttempt,
 ) -> io::Result<MazeMoveResponse> {
     let operation = retry_operation_with_step("maze move", attempt.step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         &operation,
         |client, auth_token| client.move_maze(auth_token, attempt.session_id, &attempt.direction),
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &MazeSession,
+) -> io::Result<Option<MazeSession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "maze me",
+        |client, auth_token| client.get_maze_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "maze history",
+        |client, auth_token| client.get_maze_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &MazeSession, session: &MazeSession) -> bool {
+    session.session_id == previous.session_id
+        && (!is_pending_session(session)
+            || session.move_count > previous.move_count
+            || session.player != previous.player)
+}
+
+fn response_from_session(session: MazeSession) -> MazeMoveResponse {
+    let won = session.won || session.status.trim().eq_ignore_ascii_case("won");
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    MazeMoveResponse {
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        won,
+        session,
+        ..MazeMoveResponse::default()
+    }
 }
 
 fn merge_session(previous: &MazeSession, response: MazeMoveResponse) -> MazeSession {

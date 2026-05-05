@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{
     MinesweeperClickResponse, MinesweeperConfigResponse, MinesweeperSession,
@@ -10,12 +10,15 @@ use crate::solver::minesweeper::{self, Board, Cell};
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::log::localized_difficulty;
 use super::types::RoundProgress;
 use super::types::{MinesweeperDifficultySummary, MinesweeperRoundSummary, MinesweeperSnapshot};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn difficulty_order(config: &MinesweeperConfigResponse) -> Vec<String> {
     let mut ordered = config.difficulties.keys().cloned().collect::<Vec<_>>();
@@ -106,6 +109,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &snapshot,
             MinesweeperClickAttempt {
                 play_id: snapshot.play_id,
                 action: decision.action,
@@ -163,10 +167,12 @@ fn click_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &MinesweeperSnapshot,
     attempt: MinesweeperClickAttempt,
 ) -> io::Result<MinesweeperClickResponse> {
     let operation = retry_operation_with_step("minesweeper click", attempt.step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
@@ -180,7 +186,67 @@ fn click_once(
                 attempt.y,
             )
         },
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &MinesweeperSnapshot,
+) -> io::Result<Option<MinesweeperSession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "minesweeper me",
+        |client, auth_token| client.get_minesweeper_me(auth_token),
+    )?;
+    if let Some(session) = me.active_round {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.play_id == previous.play_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "minesweeper history",
+        |client, auth_token| client.get_minesweeper_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &MinesweeperSnapshot, session: &MinesweeperSession) -> bool {
+    if session.play_id != previous.play_id {
+        return false;
+    }
+    if !is_pending_session(session) || session.trace_count > previous.trace_count {
+        return true;
+    }
+    snapshot_from_session(session)
+        .map(|snapshot| snapshot.board != previous.board)
+        .unwrap_or(false)
+}
+
+fn response_from_session(session: MinesweeperSession) -> MinesweeperClickResponse {
+    MinesweeperClickResponse {
+        ok: true,
+        session,
+        ..MinesweeperClickResponse::default()
+    }
 }
 
 pub(super) fn snapshot_from_start_response(

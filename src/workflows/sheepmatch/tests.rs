@@ -626,7 +626,7 @@ fn play_round_reports_http_409_slot_full_as_failure() {
 }
 
 #[test]
-fn ensure_authenticated_prefers_cookie_session_across_restart() {
+fn ensure_authenticated_reuses_cached_token_across_restart() {
     let temp = tempdir().unwrap();
     let auth_path = temp.path().join("auth.json");
     let login_count = Arc::new(AtomicUsize::new(0));
@@ -634,16 +634,14 @@ fn ensure_authenticated_prefers_cookie_session_across_restart() {
     let server = TestServer::start(move |request| match request.path.as_str() {
         "/api/v1/auth/login" => {
             login_count_for_server.fetch_add(1, Ordering::SeqCst);
-            ResponseSpec::json_with_headers(
+            ResponseSpec::json(
                 200,
-                vec![("Set-Cookie", "session=cookie-ok; Path=/")],
                 r#"{"code":0,"message":"ok","reason":"","data":{"access_token":"token-login","token_type":"Bearer","user":{"email":"demo@example.com"}}}"#,
             )
         }
         "/api/v1/auth/me" => {
-            let cookie = request.header("cookie");
             let auth = request.header("authorization");
-            if cookie.contains("session=cookie-ok") || auth == "Bearer token-login" {
+            if auth == "Bearer token-login" {
                 ResponseSpec::json(
                     200,
                     r#"{"code":0,"message":"ok","reason":"","data":{"email":"demo@example.com","balance":0,"status":"active"}}"#,
@@ -658,13 +656,7 @@ fn ensure_authenticated_prefers_cookie_session_across_restart() {
     let first = ApiClient::new(server.base_url());
     let (login_response, auth_token) = first.do_login("demo@example.com", "pw").unwrap();
     assert_eq!(auth_token, "Bearer token-login");
-    let account = cache_from_login(
-        &login_response,
-        "demo@example.com",
-        "pw",
-        first.base_url(),
-        first.export_session_cookies(),
-    );
+    let account = cache_from_login(&login_response, "demo@example.com", "pw", first.base_url());
 
     let state = Arc::new(Mutex::new(BatchState {
         config: AuthConfig::default(),
@@ -680,11 +672,119 @@ fn ensure_authenticated_prefers_cookie_session_across_restart() {
 
     ensure_authenticated(&state, &mut runtime).unwrap();
 
-    assert!(runtime.auth_token.is_empty());
+    assert_eq!(runtime.auth_token, "Bearer token-login");
     assert_eq!(login_count.load(Ordering::SeqCst), 1);
     let session = get_session(&runtime.account, runtime.api_client.base_url()).unwrap();
-    assert_eq!(session.cookies.len(), 1);
-    assert_eq!(session.cookies[0].value, "cookie-ok");
+    assert_eq!(session.token_type, "Bearer");
+    assert_eq!(session.access_token, "token-login");
+}
+
+#[test]
+fn do_login_validates_token_with_auth_me() {
+    let server = TestServer::start(move |request| match request.path.as_str() {
+        "/api/v1/auth/login" => ResponseSpec::json(
+            200,
+            r#"{"code":0,"message":"ok","reason":"","data":{"access_token":"token-login","token_type":"Bearer","user":{"email":"demo@example.com"}}}"#,
+        ),
+        "/api/v1/auth/me" => {
+            let auth = request.header("authorization");
+            if auth == "Bearer token-login" {
+                ResponseSpec::json(
+                    200,
+                    r#"{"code":0,"message":"ok","reason":"","data":{"email":"demo@example.com","balance":0,"status":"active"}}"#,
+                )
+            } else {
+                ResponseSpec::json(401, r#"{"message":"unauthorized"}"#)
+            }
+        }
+        _ => ResponseSpec::json(404, r#"{"message":"not found"}"#),
+    });
+
+    let client = ApiClient::new(server.base_url());
+    let (_login_response, auth_token) = client.do_login("demo@example.com", "pw").unwrap();
+
+    assert_eq!(auth_token, "Bearer token-login");
+}
+
+#[test]
+fn do_login_allows_standard_auth_me_response() {
+    let server = TestServer::start(move |request| match request.path.as_str() {
+        "/api/v1/auth/login" => ResponseSpec::json(
+            200,
+            r#"{"code":0,"message":"ok","reason":"","data":{"access_token":"token-login","token_type":"Bearer","user":{"email":"demo@example.com"}}}"#,
+        ),
+        "/api/v1/auth/me" => {
+            let auth = request.header("authorization");
+            if auth == "Bearer token-login" {
+                ResponseSpec::json(
+                    200,
+                    r#"{"code":0,"message":"ok","reason":"","data":{"email":"demo@example.com","balance":0,"status":"active"}}"#,
+                )
+            } else {
+                ResponseSpec::json(401, r#"{"message":"unauthorized"}"#)
+            }
+        }
+        _ => ResponseSpec::json(404, r#"{"message":"not found"}"#),
+    });
+
+    let client = ApiClient::new(server.base_url());
+    let (_login_response, auth_token) = client.do_login("demo@example.com", "pw").unwrap();
+
+    assert_eq!(auth_token, "Bearer token-login");
+}
+
+#[test]
+fn ensure_authenticated_reuses_token_cache() {
+    let temp = tempdir().unwrap();
+    let auth_path = temp.path().join("auth.json");
+    let login_count = Arc::new(AtomicUsize::new(0));
+    let login_count_for_server = Arc::clone(&login_count);
+    let server = TestServer::start(move |request| match request.path.as_str() {
+        "/api/v1/auth/login" => {
+            login_count_for_server.fetch_add(1, Ordering::SeqCst);
+            ResponseSpec::json(
+                200,
+                r#"{"code":0,"message":"ok","reason":"","data":{"access_token":"fresh-token","token_type":"Bearer","user":{"email":"demo@example.com"}}}"#,
+            )
+        }
+        "/api/v1/auth/me" => {
+            let auth = request.header("authorization");
+            if auth == "Bearer cached-token" {
+                ResponseSpec::json(
+                    200,
+                    r#"{"code":0,"message":"ok","reason":"","data":{"email":"demo@example.com","balance":0,"status":"active"}}"#,
+                )
+            } else {
+                ResponseSpec::json(401, r#"{"message":"unauthorized"}"#)
+            }
+        }
+        _ => ResponseSpec::json(404, r#"{"message":"not found"}"#),
+    });
+
+    let state = Arc::new(Mutex::new(BatchState {
+        config: AuthConfig::default(),
+        auth_cache_file: Some(auth_path),
+        result_log_dir: temp.path().join("log"),
+        log: crate::ui::TaskLog::stdout(),
+    }));
+    let mut runtime = AccountRuntime {
+        api_client: ApiClient::new(server.base_url()),
+        account: AuthCache {
+            email: "demo@example.com".to_string(),
+            password: "pw".to_string(),
+            token_type: "Bearer".to_string(),
+            access_token: "cached-token".to_string(),
+            ..AuthCache::default()
+        },
+        auth_token: String::new(),
+    };
+
+    ensure_authenticated(&state, &mut runtime).unwrap();
+
+    assert_eq!(login_count.load(Ordering::SeqCst), 0);
+    assert_eq!(runtime.auth_token, "Bearer cached-token");
+    let session = get_session(&runtime.account, runtime.api_client.base_url()).unwrap();
+    assert_eq!(session.access_token, "cached-token");
 }
 
 #[test]
@@ -803,10 +903,8 @@ fn with_auth_retry_reauthenticates_after_unauthorized_step() {
     let server = TestServer::start(move |request| match request.path.as_str() {
         "/api/v1/auth/me" => {
             let count = validate_count_for_server.fetch_add(1, Ordering::SeqCst) + 1;
-            let cookie = request.header("cookie");
             let auth = request.header("authorization");
-            let valid = cookie.contains("session=fresh-1")
-                || (count >= 2 && auth == "Bearer fresh-token-1");
+            let valid = count >= 2 && auth == "Bearer fresh-token-1";
             if valid {
                 ResponseSpec::json(
                     200,
@@ -818,9 +916,8 @@ fn with_auth_retry_reauthenticates_after_unauthorized_step() {
         }
         "/api/v1/auth/login" => {
             let count = login_count_for_server.fetch_add(1, Ordering::SeqCst) + 1;
-            ResponseSpec::json_with_headers(
+            ResponseSpec::json(
                 200,
-                vec![("Set-Cookie", &format!("session=fresh-{count}; Path=/"))],
                 &format!(
                     "{{\"code\":0,\"message\":\"ok\",\"reason\":\"\",\"data\":{{\"access_token\":\"fresh-token-{count}\",\"token_type\":\"Bearer\",\"user\":{{\"email\":\"demo@example.com\"}}}}}}"
                 ),
@@ -873,8 +970,7 @@ fn with_auth_retry_reauthenticates_after_unauthorized_step() {
     assert_eq!(login_count.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.auth_token, "Bearer fresh-token-1");
     let session = get_session(&runtime.account, runtime.api_client.base_url()).unwrap();
-    assert_eq!(session.cookies.len(), 1);
-    assert_eq!(session.cookies[0].value, "fresh-1");
+    assert_eq!(session.access_token, "fresh-token-1");
 }
 
 struct TestServer {
@@ -963,21 +1059,6 @@ impl ResponseSpec {
         Self {
             status,
             headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-            body: body.to_string(),
-            close_without_response: false,
-        }
-    }
-
-    fn json_with_headers(status: u16, headers: Vec<(&str, &str)>, body: &str) -> Self {
-        let mut all_headers = vec![("Content-Type".to_string(), "application/json".to_string())];
-        all_headers.extend(
-            headers
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value.to_string())),
-        );
-        Self {
-            status,
-            headers: all_headers,
             body: body.to_string(),
             close_without_response: false,
         }

@@ -1,23 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::is_false;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct SessionCookie {
-    pub name: String,
-    pub value: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub domain: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub path: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub expires_at: String,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub secure: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub http_only: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AuthSession {
     pub base_url: String,
@@ -25,8 +7,6 @@ pub struct AuthSession {
     pub token_type: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub access_token: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cookies: Vec<SessionCookie>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -38,8 +18,6 @@ pub struct AuthCache {
     pub token_type: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub access_token: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cookies: Vec<SessionCookie>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<AuthSession>,
 }

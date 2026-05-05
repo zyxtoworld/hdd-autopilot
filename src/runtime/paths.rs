@@ -295,12 +295,16 @@ mod tests {
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
 
-        let got =
-            resolve_data_file_path_with_sources("log/checkin/checkin.log", Some(src_dir), None);
+        let got = resolve_data_file_path_with_sources(
+            "log/20260506/checkin/checkin.log",
+            Some(src_dir),
+            None,
+        );
         assert_eq!(
             got,
             root.join("var")
                 .join("log")
+                .join("20260506")
                 .join("checkin")
                 .join("checkin.log")
         );

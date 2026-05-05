@@ -5,8 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::TimeZone;
-
 use crate::backend::{BackendDescriptor, BackendKind, BenchmarkResult, ComputeJob};
 use crate::{ChallengeResponse, MiningError};
 
@@ -238,17 +236,39 @@ pub(super) fn append_reward_code(
     writeln!(
         file,
         "[{}] 已保存{}（实际发放{}）：{}",
-        chrono::Utc
-            .timestamp_millis_opt(current_unix_ms())
-            .single()
-            .unwrap()
-            .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
-            .format("%Y-%m-%d %H:%M:%S"),
+        format_log_time(current_unix_ms()),
         requested_label,
         actual_label,
         code
     )?;
     Ok(())
+}
+
+fn format_log_time(when_unix_ms: i64) -> String {
+    let when = system_local_datetime(when_unix_ms);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        when.year(),
+        u8::from(when.month()),
+        when.day(),
+        when.hour(),
+        when.minute(),
+        when.second()
+    )
+}
+
+fn system_local_datetime(when_unix_ms: i64) -> time::OffsetDateTime {
+    let when_unix_ms = if when_unix_ms > 0 {
+        when_unix_ms
+    } else {
+        current_unix_ms()
+    };
+    let utc = time::OffsetDateTime::from_unix_timestamp_nanos(
+        i128::from(when_unix_ms).saturating_mul(1_000_000),
+    )
+    .unwrap_or_else(|_| time::OffsetDateTime::from_unix_timestamp(0).unwrap());
+    let offset = time::UtcOffset::local_offset_at(utc).unwrap_or(time::UtcOffset::UTC);
+    utc.to_offset(offset)
 }
 
 pub(super) fn check_cancel(cancel: &AtomicBool) -> Result<(), MiningError> {

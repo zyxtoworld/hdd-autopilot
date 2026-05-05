@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::ui;
 use crate::workflows::common::{
-    append_account_log_line as append_line, beijing_time, format_amount, format_duration_ms,
+    append_account_log_line as append_line, format_amount, format_duration_ms, format_log_time,
     join_log_clauses as join_clauses, reason_clause as format_reason_clause, round_mode_label,
     round_progress_label as format_round_progress,
 };
@@ -16,7 +16,7 @@ pub(super) fn append_run_header(log_dir: &Path, email: &str, when_unix_ms: i64) 
         email,
         &format!(
             "[{}] 开始运行，正在处理账号 {}\n",
-            beijing_time(when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
+            format_log_time(when_unix_ms),
             email
         ),
     )
@@ -53,7 +53,7 @@ pub(super) fn append_account_summary(
         &join_clauses(&[
             format!(
                 "[{}] 账号 {} 的数织全部难度汇总：一共玩了 {} 局",
-                beijing_time(when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
+                format_log_time(when_unix_ms),
                 email,
                 total_played
             ),
@@ -89,7 +89,7 @@ fn format_round_result_line(result: &NonogramRoundSummary) -> String {
     join_clauses(&[
         format!(
             "[{}] 账号 {} 的数织{}难度第 {} 局（{}，对局 {}）已结算：{}",
-            beijing_time(result.when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
+            format_log_time(result.when_unix_ms),
             result.email,
             localized_difficulty(&result.difficulty),
             result.round_index.max(1),
@@ -110,7 +110,7 @@ fn format_difficulty_summary_line(summary: &NonogramDifficultySummary) -> String
     join_clauses(&[
         format!(
             "[{}] 账号 {} 的数织{}难度已跑完：一共玩了 {} 局",
-            beijing_time(summary.when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
+            format_log_time(summary.when_unix_ms),
             summary.email,
             localized_difficulty(&summary.difficulty),
             summary.played

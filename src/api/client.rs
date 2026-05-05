@@ -23,26 +23,24 @@ use crate::model::{
     Puzzle2048ConfigResponse, Puzzle2048HistoryResponse, Puzzle2048MeResponse,
     Puzzle2048MoveRequest, Puzzle2048MoveResponse, Puzzle2048StartRequest, Puzzle2048StartResponse,
     ScratchHistoryResponse, ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest,
-    ScratchRevealResponse, SessionCookie, SokobanConfigResponse, SokobanHistoryResponse,
-    SokobanMeResponse, SokobanMoveRequest, SokobanMoveResponse, SokobanStartRequest,
-    SokobanStartResponse, StartRequest, StartResponse, StepRequest, StepResponse,
-    SudokuConfigResponse, SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse,
-    SudokuMeResponse, SudokuStartRequest, SudokuStartResponse, TileMeResponse,
+    ScratchRevealResponse, SokobanConfigResponse, SokobanHistoryResponse, SokobanMeResponse,
+    SokobanMoveRequest, SokobanMoveResponse, SokobanStartRequest, SokobanStartResponse,
+    StartRequest, StartResponse, StepRequest, StepResponse, SudokuConfigResponse,
+    SudokuFillRequest, SudokuFillResponse, SudokuHistoryResponse, SudokuMeResponse,
+    SudokuStartRequest, SudokuStartResponse, TileMeResponse,
 };
 use crate::storage::{build_authorization, normalize_base_url};
 use reqwest::blocking::Client;
 use reqwest::header::{
-    ACCEPT, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, SET_COOKIE,
-    USER_AGENT,
+    ACCEPT, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT,
 };
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
-use super::cookies::{cookie_header_value, merge_session_cookies, normalize_session_cookies};
 use super::endpoints::{api_label_for_path, localized_status_message};
 use super::{
     ARROW_OUT_ABANDON_PATH, ARROW_OUT_CONFIG_PATH, ARROW_OUT_FINISH_PATH, ARROW_OUT_HISTORY_PATH,
-    ARROW_OUT_ME_PATH, ARROW_OUT_START_PATH, AUTH_ME_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH,
+    ARROW_OUT_ME_PATH, ARROW_OUT_START_PATH, ApiClient, ApiError, CHECKIN_CLAIM_PATH,
     CHECKIN_ME_PATH, CHECKIN_TODAY_PATH, DEFAULT_BASE_URL, DEFAULT_USER_AGENT,
     FLOWFREE_ABANDON_PATH, FLOWFREE_CONFIG_PATH, FLOWFREE_FINISH_PATH, FLOWFREE_HISTORY_PATH,
     FLOWFREE_ME_PATH, FLOWFREE_START_PATH, LIGHTSOUT_CLICK_PATH, LIGHTSOUT_CONFIG_PATH,
@@ -59,6 +57,7 @@ use super::{
     SOKOBAN_ME_PATH, SOKOBAN_MOVE_PATH, SOKOBAN_START_PATH, SUDOKU_CONFIG_PATH, SUDOKU_FILL_PATH,
     SUDOKU_HISTORY_PATH, SUDOKU_ME_PATH, SUDOKU_START_PATH, TILE_ABANDON_PATH, TILE_CONFIG_PATH,
     TILE_HISTORY_PATH, TILE_ME_PATH, TILE_START_PATH, TILE_STEP_PATH, UnauthorizedError,
+    auth_me_path,
 };
 
 impl ApiClient {
@@ -77,7 +76,6 @@ impl ApiClient {
         Self {
             base_url,
             http_client,
-            session_cookies: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -85,24 +83,11 @@ impl ApiClient {
         &self.base_url
     }
 
-    pub fn export_session_cookies(&self) -> Vec<SessionCookie> {
-        self.session_cookies.lock().unwrap().clone()
-    }
-
-    pub fn clear_session_cookies(&mut self) {
-        self.session_cookies.lock().unwrap().clear();
-    }
-
-    pub fn load_session_cookies(&mut self, cookies: &[SessionCookie]) -> Result<(), ApiError> {
-        let mut stored = self.session_cookies.lock().unwrap();
-        *stored = normalize_session_cookies(cookies.to_vec());
-        Ok(())
-    }
-
     pub fn validate_auth_token(&self, auth_token: &str) -> Result<AuthMeResponse, ApiError> {
+        let path = auth_me_path();
         self.get_json(
             Method::GET,
-            AUTH_ME_PATH,
+            &path,
             auth_token,
             &(self.base_url.clone() + "/dashboard"),
             Option::<&()>::None,
@@ -114,7 +99,7 @@ impl ApiClient {
         email: &str,
         password: &str,
     ) -> Result<(LoginResponse, String), ApiError> {
-        let response: LoginResponse = self.get_json(
+        let mut response: LoginResponse = self.get_json(
             Method::POST,
             LOGIN_PATH,
             "",
@@ -142,6 +127,11 @@ impl ApiClient {
             build_authorization(&response.data.token_type, &response.data.access_token);
         if auth_token.is_empty() {
             return Err(ApiError::Message("登录返回的令牌为空".to_string()));
+        }
+        let auth_me = self.validate_auth_token(&auth_token)?;
+        let validated_email = auth_me.data.email.trim();
+        if !validated_email.is_empty() {
+            response.data.user.email = validated_email.to_string();
         }
         Ok((response, auth_token))
     }
@@ -1240,13 +1230,6 @@ impl ApiClient {
         if !auth_token.trim().is_empty() {
             request = request.header(AUTHORIZATION, auth_token.trim());
         }
-        let cookie_header = {
-            let cookies = self.session_cookies.lock().unwrap();
-            cookie_header_value(&cookies)
-        };
-        if !cookie_header.is_empty() {
-            request = request.header(COOKIE, cookie_header);
-        }
         if let Some(payload) = payload {
             request = request.json(payload);
         }
@@ -1254,15 +1237,6 @@ impl ApiClient {
         let response = request
             .send()
             .map_err(|error| ApiError::Message(error.to_string()))?;
-        let set_cookie_headers = response
-            .headers()
-            .get_all(SET_COOKIE)
-            .iter()
-            .filter_map(|value| value.to_str().ok().map(str::to_string))
-            .collect::<Vec<_>>();
-        if !set_cookie_headers.is_empty() {
-            self.store_set_cookie_headers(&set_cookie_headers);
-        }
         let status = response.status();
         let body = response
             .text()
@@ -1287,12 +1261,6 @@ impl ApiClient {
                 response_body_preview(&body)
             ))
         })
-    }
-
-    fn store_set_cookie_headers(&self, set_cookie_headers: &[String]) {
-        let mut stored = self.session_cookies.lock().unwrap();
-        let existing = stored.clone();
-        *stored = merge_session_cookies(&existing, set_cookie_headers);
     }
 }
 

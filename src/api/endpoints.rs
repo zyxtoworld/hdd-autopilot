@@ -14,6 +14,7 @@ use super::{
 };
 
 pub(super) fn api_label_for_path(path: &str) -> &'static str {
+    let path = path.split_once('?').map_or(path, |(path, _)| path);
     if path.starts_with("/sokoban-api/") {
         return "推箱子接口";
     }
@@ -119,9 +120,13 @@ pub(super) fn localized_status_message(status: StatusCode, body: &str) -> String
 fn fallback_status_detail(status: StatusCode) -> &'static str {
     match status {
         StatusCode::BAD_REQUEST => "请求参数不符合服务端要求",
+        StatusCode::FORBIDDEN => "没有权限执行当前操作，可能需要重新登录或账号状态受限",
+        StatusCode::NOT_FOUND => "接口或当前对局不存在",
         StatusCode::CONFLICT => {
             "请求状态冲突：可能已有未结束对局、重复提交了一步，或服务端状态还没同步"
         }
+        StatusCode::UNPROCESSABLE_ENTITY => "请求内容无法被服务端处理",
+        StatusCode::REQUEST_TIMEOUT => "请求超时",
         StatusCode::TOO_MANY_REQUESTS => "请求太频繁，服务端要求稍后再试",
         _ if status.is_server_error() => "服务端暂时异常",
         _ => "服务端返回了错误",
@@ -265,6 +270,19 @@ mod tests {
 
         assert!(daily_limit.contains("次数已经用完"));
         assert!(rate_limited.contains("请求太频繁"));
+    }
+
+    #[test]
+    fn localized_status_message_has_common_status_fallbacks() {
+        let forbidden = localized_status_message(StatusCode::FORBIDDEN, "");
+        let not_found = localized_status_message(StatusCode::NOT_FOUND, "");
+        let unprocessable = localized_status_message(StatusCode::UNPROCESSABLE_ENTITY, "");
+        let timeout = localized_status_message(StatusCode::REQUEST_TIMEOUT, "");
+
+        assert!(forbidden.contains("没有权限"));
+        assert!(not_found.contains("不存在"));
+        assert!(unprocessable.contains("无法被服务端处理"));
+        assert!(timeout.contains("请求超时"));
     }
 
     #[test]

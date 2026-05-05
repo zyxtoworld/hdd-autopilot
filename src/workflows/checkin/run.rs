@@ -10,7 +10,7 @@ use crate::workflows::common::{
     current_unix_ms, humanize_retryable_api_error, is_retryable_api_error,
 };
 
-use super::auth::{ensure_authenticated, reauthenticate};
+use super::auth::{ensure_authenticated_for_checkin, reauthenticate};
 use super::log::append_checkin_log;
 use super::{AccountRuntime, BatchState};
 
@@ -49,7 +49,7 @@ pub(super) fn run_one_account_inner(
     let email = runtime.email().to_string();
     if let Err(error) =
         retry_checkin_api_until_success(cancel_flag, &state, &email, "签到登录状态", || {
-            ensure_authenticated(&state, &mut runtime)
+            ensure_authenticated_for_checkin(&state, &mut runtime)
         })?
     {
         return Ok(Some(record_checkin_result(
@@ -106,6 +106,7 @@ fn run_checkin_once_with_auth_retry(
                 runtime.email()
             ));
             reauthenticate(state, runtime)?;
+            ensure_authenticated_for_checkin(state, runtime)?;
             run_checkin(runtime, email)
         }
         Err(error) => Err(error),

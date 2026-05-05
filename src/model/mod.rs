@@ -2,10 +2,6 @@ pub(crate) fn is_zero_i32(value: &i32) -> bool {
     *value == 0
 }
 
-pub(crate) fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 mod arrow_out;
 mod auth;
 mod checkin;
@@ -30,7 +26,7 @@ pub use arrow_out::{
 };
 pub use auth::{
     AuthCache, AuthConfig, AuthMeData, AuthMeResponse, AuthSession, LoginRequest, LoginResponse,
-    LoginResponseData, LoginUser, SessionCookie,
+    LoginResponseData, LoginUser,
 };
 pub use checkin::{
     CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse, CheckinUser,

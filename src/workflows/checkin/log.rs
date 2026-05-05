@@ -3,14 +3,15 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::model::CheckinResult;
-use crate::workflows::common::{beijing_time, format_amount};
+use crate::workflows::common::{dated_project_log_dir, format_amount, format_log_time};
 
 pub fn append_checkin_log(log_dir: impl AsRef<Path>, result: &CheckinResult) -> io::Result<()> {
-    fs::create_dir_all(log_dir.as_ref())?;
-    let path = log_dir.as_ref().join("checkin.log");
+    let project_log_dir = dated_project_log_dir(log_dir.as_ref(), result.when_unix_ms);
+    fs::create_dir_all(&project_log_dir)?;
+    let path = project_log_dir.join("checkin.log");
     let line = format_checkin_result_line(result);
-    let when = beijing_time(result.when_unix_ms);
-    let entry = format!("[{}] {}\n", when.format("%Y-%m-%d %H:%M:%S"), line);
+    let when = format_log_time(result.when_unix_ms);
+    let entry = format!("[{}] {}\n", when, line);
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(entry.as_bytes())?;
     file.flush()
@@ -88,7 +89,8 @@ mod tests {
         };
 
         append_checkin_log(dir.path(), &result).unwrap();
-        let content = std::fs::read_to_string(dir.path().join("checkin.log")).unwrap();
+        let path = dated_project_log_dir(dir.path(), result.when_unix_ms).join("checkin.log");
+        let content = std::fs::read_to_string(path).unwrap();
 
         assert!(content.contains("账号 demo@example.com 签到结果：签到失败，本次增加 0，当前余额 12.34，原因：签到接口未返回成功标记。"));
     }

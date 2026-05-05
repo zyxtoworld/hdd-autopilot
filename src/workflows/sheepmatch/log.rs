@@ -4,20 +4,16 @@ use std::path::Path;
 use crate::model::{AccountRunSummary, RoundResultSummary};
 use crate::ui;
 use crate::workflows::common::{
-    append_account_log_line as append_line, beijing_time, format_amount, format_duration_ms,
+    append_account_log_line as append_line, format_amount, format_duration_ms, format_log_time,
     join_log_clauses as join_clauses, reason_clause as format_reason_clause, round_mode_label,
 };
 
 pub(super) fn append_run_header(log_dir: &Path, email: &str, when_unix_ms: i64) -> io::Result<()> {
-    let when = beijing_time(when_unix_ms);
+    let when = format_log_time(when_unix_ms);
     append_line(
         log_dir,
         email,
-        &format!(
-            "[{}] 开始运行，正在处理账号 {}。\n",
-            when.format("%Y-%m-%d %H:%M:%S"),
-            email
-        ),
+        &format!("[{}] 开始运行，正在处理账号 {}。\n", when, email),
     )
 }
 
@@ -42,7 +38,7 @@ pub(super) fn append_account_summary(
     when_unix_ms: i64,
     summaries: &[AccountRunSummary],
 ) -> io::Result<()> {
-    let when = beijing_time(when_unix_ms);
+    let when = format_log_time(when_unix_ms);
     let total_played: i32 = summaries.iter().map(|item| item.played).sum();
     let total_won: i32 = summaries.iter().map(|item| item.won).sum();
     let total_abandoned: i32 = summaries.iter().map(|item| item.abandoned).sum();
@@ -55,9 +51,7 @@ pub(super) fn append_account_summary(
         &join_clauses(&[
             format!(
                 "[{}] 账号 {} 的全部难度汇总：一共玩了 {} 局",
-                when.format("%Y-%m-%d %H:%M:%S"),
-                email,
-                total_played
+                when, email, total_played
             ),
             format!("成功 {} 局", total_won),
             format!("失败 {} 局", total_failed),
@@ -69,11 +63,11 @@ pub(super) fn append_account_summary(
 }
 
 fn format_round_result_line(result: &RoundResultSummary) -> String {
-    let when = beijing_time(result.when_unix_ms);
+    let when = format_log_time(result.when_unix_ms);
     join_clauses(&[
         format!(
             "[{}] {} 的{}难度第 {} 局（{}，对局 {}）已结算：{}",
-            when.format("%Y-%m-%d %H:%M:%S"),
+            when,
             result.email,
             localized_difficulty(&result.difficulty),
             result.round_index.max(1),
@@ -95,7 +89,7 @@ fn format_difficulty_summary_line(summary: &AccountRunSummary) -> String {
     join_clauses(&[
         format!(
             "[{}] {} 的{}难度已跑完：一共玩了 {} 局",
-            beijing_time(summary.when_unix_ms).format("%Y-%m-%d %H:%M:%S"),
+            format_log_time(summary.when_unix_ms),
             summary.email,
             localized_difficulty(&summary.difficulty),
             summary.played

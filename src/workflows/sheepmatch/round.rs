@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use crate::api::ApiError;
 use crate::model::{
-    AccountRunSummary, ConfigResponse, RoundResultSummary, SessionSnapshot, StartResponse,
-    StepRequest, StepResponse,
+    AccountRunSummary, ConfigResponse, HistoryItem, RoundResultSummary, SessionSnapshot,
+    StartResponse, StepRequest, StepResponse,
 };
 use crate::ui;
 use crate::workflows::common::{
@@ -128,6 +128,11 @@ pub(super) fn play_round(
                     status: 409,
                     message,
                 }) if is_slot_full_error(&message) || is_stale_click_error(&message) => {
+                    if let Some(recovered) =
+                        recover_progressed_step(cancel_flag, state, runtime, &snapshot)?
+                    {
+                        break Ok(recovered);
+                    }
                     break Err(io::Error::other(message));
                 }
                 Err(error) if is_retryable_step_transport_error(&error) => {
@@ -138,6 +143,11 @@ pub(super) fn play_round(
                         step_attempts,
                         &error,
                     );
+                    if let Some(recovered) =
+                        recover_progressed_step(cancel_flag, state, runtime, &snapshot)?
+                    {
+                        break Ok(recovered);
+                    }
                     if step_attempts >= API_RETRY_MAX_ATTEMPTS {
                         return Err(step_retry_exhausted_error(
                             snapshot.move_count + 1,
@@ -235,6 +245,75 @@ fn is_retryable_step_transport_error(error: &ApiError) -> bool {
     is_retryable_api_error(error)
 }
 
+fn recover_progressed_step(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    snapshot: &SessionSnapshot,
+) -> io::Result<Option<StepResponse>> {
+    ui::sleep_with_cancel(cancel_flag, STEP_RETRY_BACKOFF)?;
+    let me = match with_auth_retry_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "tile me",
+        |client, auth_token| client.get_tile_me(auth_token),
+    ) {
+        Ok(me) => me,
+        Err(_) => return Ok(None),
+    };
+    if let Some(item) = me.active_session {
+        if is_progressed_item(snapshot, &item) {
+            return Ok(Some(step_response_from_history_item(item)));
+        }
+        if item.session_id == snapshot.session_id {
+            return Ok(None);
+        }
+    }
+    let history = match with_auth_retry_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "tile history",
+        |client, auth_token| client.get_tile_history(auth_token),
+    ) {
+        Ok(history) => history,
+        Err(_) => return Ok(None),
+    };
+    Ok(history
+        .items
+        .into_iter()
+        .find(|item| is_progressed_item(snapshot, item))
+        .map(step_response_from_history_item))
+}
+
+fn is_progressed_item(snapshot: &SessionSnapshot, item: &HistoryItem) -> bool {
+    item.session_id == snapshot.session_id
+        && (!item.status.trim().eq_ignore_ascii_case("pending")
+            || item.move_count > snapshot.move_count
+            || item.tiles != snapshot.tiles
+            || item.slot_tiles != snapshot.slot_tiles)
+}
+
+fn step_response_from_history_item(item: HistoryItem) -> StepResponse {
+    StepResponse {
+        action: "click".to_string(),
+        ended_at_ms: item.ended_at_ms,
+        history: item.history,
+        move_count: item.move_count,
+        ok: true,
+        powerups: Some(item.powerups),
+        reward_amount: item.reward_amount,
+        session_id: item.session_id,
+        slot_limit: item.slot_limit,
+        slots: Some(item.slots),
+        status: item.status,
+        tiles: Some(item.tiles),
+        total_tiles: item.total_tiles,
+        ..StepResponse::default()
+    }
+}
+
 fn log_step_retry(
     state: &Arc<Mutex<BatchState>>,
     email: &str,
@@ -324,7 +403,11 @@ fn build_round_from_step(
         dry_run: false,
         status: step.status.clone(),
         reward: step.reward_amount,
-        balance_after: Some(step.balance),
+        balance_after: if step.balance != 0.0 {
+            Some(step.balance)
+        } else {
+            None
+        },
         remaining_after: context.remaining_after,
         move_count: step.move_count,
         used_powerups: context.used_powerups.to_vec(),

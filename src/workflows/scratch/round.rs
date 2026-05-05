@@ -144,7 +144,23 @@ pub(super) fn settle_pending_rounds(
                 }
             }
             Err(error) => {
-                result.reveal_error_message = error.to_string();
+                match fetch_scratch_history_item_with_retry(
+                    cancel_flag,
+                    state,
+                    runtime,
+                    item.id,
+                    options.history_retries,
+                    options.history_wait,
+                    true,
+                ) {
+                    Ok((Some(history_item), attempts)) => {
+                        result.reveal_history_attempts = attempts as i32;
+                        result.reveal_history_item = Some(history_item);
+                    }
+                    _ => {
+                        result.reveal_error_message = error.to_string();
+                    }
+                }
             }
         }
 
@@ -242,9 +258,27 @@ fn run_round(
     }) {
         Ok(reveal_resp) => reveal_resp,
         Err(error) => {
-            result.reveal_error_message = error.to_string();
-            result.duration_ms = started.elapsed().as_millis() as i64;
-            return Ok(result);
+            match fetch_scratch_history_item_with_retry(
+                cancel_flag,
+                state,
+                runtime,
+                play_resp.play_id,
+                options.history_retries,
+                options.history_wait,
+                true,
+            ) {
+                Ok((Some(history_item), attempts)) => {
+                    result.reveal_history_attempts = attempts as i32;
+                    result.reveal_history_item = Some(history_item);
+                    result.duration_ms = started.elapsed().as_millis() as i64;
+                    return Ok(result);
+                }
+                _ => {
+                    result.reveal_error_message = error.to_string();
+                    result.duration_ms = started.elapsed().as_millis() as i64;
+                    return Ok(result);
+                }
+            }
         }
     };
     result.reveal_resp = Some(reveal_resp);

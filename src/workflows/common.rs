@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{FixedOffset, TimeZone, Utc};
-
 use crate::api::{ApiClient, ApiError, is_unauthorized};
-use crate::model::{AuthCache, AuthConfig, AuthSession};
+use crate::model::{AuthCache, AuthConfig, AuthMeResponse, AuthSession};
 use crate::storage::{
     build_authorization, cache_from_login, get_session, password_usable, save_cache,
     upsert_account, upsert_session,
@@ -21,6 +19,10 @@ pub(crate) const API_RETRY_MAX_ATTEMPTS: usize = 60;
 #[cfg(test)]
 pub(crate) const API_RETRY_MAX_ATTEMPTS: usize = 2;
 const ACCOUNT_TASK_RETRY_BACKOFF: Duration = Duration::ZERO;
+#[cfg(not(test))]
+pub(crate) const TASK_REENTRY_MAX_RETRIES: usize = 3;
+#[cfg(test)]
+pub(crate) const TASK_REENTRY_MAX_RETRIES: usize = 2;
 
 #[derive(Debug)]
 pub(crate) struct BatchState {
@@ -177,15 +179,37 @@ where
             Ok(value) => return Ok(value),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
             Err(error) => {
+                if task_reentry_limit_reached(retry_count) {
+                    log.line_fmt(format_args!(
+                        "账号 {} 的{}连续重进玩法 {} 次仍失败，已停止该任务以避免阻塞线程：{}",
+                        email, task_name, retry_count, error
+                    ));
+                    return Err(task_reentry_exhausted_error(task_name, retry_count, &error));
+                }
                 retry_count += 1;
                 log.line_fmt(format_args!(
-                    "账号 {} 的{}这次没有跑完：{}。不会跳过，等一下重新进入续残局/剩余次数（第 {} 次重试）。",
-                    email, task_name, error, retry_count
+                    "账号 {} 的{}这次没有跑完：{}。会重新进入续残局/剩余次数（第 {}/{} 次重试）。",
+                    email, task_name, error, retry_count, TASK_REENTRY_MAX_RETRIES
                 ));
                 ui::sleep_with_cancel(cancel_flag, ACCOUNT_TASK_RETRY_BACKOFF)?;
             }
         }
     }
+}
+
+pub(crate) fn task_reentry_limit_reached(retry_count: usize) -> bool {
+    retry_count >= TASK_REENTRY_MAX_RETRIES
+}
+
+pub(crate) fn task_reentry_exhausted_error(
+    task_name: &str,
+    retry_count: usize,
+    error: &io::Error,
+) -> io::Error {
+    io::Error::other(format!(
+        "{}连续重进玩法 {} 次仍失败，已停止该任务以避免阻塞线程：{}",
+        task_name, retry_count, error
+    ))
 }
 
 pub(crate) fn retry_operation_with_step(operation: &str, step: i32) -> String {
@@ -199,30 +223,17 @@ pub(crate) fn current_unix_ms() -> i64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn beijing_time(when_unix_ms: i64) -> chrono::DateTime<FixedOffset> {
-    Utc.timestamp_millis_opt(when_unix_ms)
-        .single()
-        .unwrap_or_else(|| {
-            Utc.timestamp_millis_opt(current_unix_ms())
-                .single()
-                .unwrap()
-        })
-        .with_timezone(&FixedOffset::east_opt(8 * 60 * 60).unwrap())
-}
-
-#[cfg(test)]
-pub(crate) fn same_beijing_day(left_unix_ms: i64, right_unix_ms: i64) -> bool {
-    if left_unix_ms <= 0 || right_unix_ms <= 0 {
-        return false;
-    }
-    const BEIJING_OFFSET_MS: i64 = 8 * 60 * 60 * 1000;
-    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-    left_unix_ms
-        .saturating_add(BEIJING_OFFSET_MS)
-        .div_euclid(DAY_MS)
-        == right_unix_ms
-            .saturating_add(BEIJING_OFFSET_MS)
-            .div_euclid(DAY_MS)
+pub(crate) fn format_log_time(when_unix_ms: i64) -> String {
+    let when = system_local_datetime(when_unix_ms);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        when.year(),
+        u8::from(when.month()),
+        when.day(),
+        when.hour(),
+        when.minute(),
+        when.second()
+    )
 }
 
 pub(crate) fn append_account_log_line(
@@ -230,14 +241,60 @@ pub(crate) fn append_account_log_line(
     email: &str,
     content: &str,
 ) -> io::Result<()> {
-    fs::create_dir_all(log_dir)?;
-    let path = account_log_file_path(log_dir, email);
+    let path = dated_account_log_file_path(log_dir, email, current_unix_ms());
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(content.as_bytes())?;
     file.flush()
 }
 
-pub(crate) fn account_log_file_path(log_dir: &Path, email: &str) -> PathBuf {
+pub(crate) fn dated_project_log_dir(log_dir: &Path, when_unix_ms: i64) -> PathBuf {
+    let date = format_log_date(when_unix_ms);
+    let project = log_dir
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| std::ffi::OsStr::new("unknown"));
+    log_dir
+        .parent()
+        .map(|parent| parent.join(date.to_string()).join(project))
+        .unwrap_or_else(|| log_dir.join(date.to_string()))
+}
+
+fn format_log_date(when_unix_ms: i64) -> String {
+    let when = system_local_datetime(when_unix_ms);
+    format!(
+        "{:04}{:02}{:02}",
+        when.year(),
+        u8::from(when.month()),
+        when.day()
+    )
+}
+
+fn system_local_datetime(when_unix_ms: i64) -> time::OffsetDateTime {
+    let when_unix_ms = if when_unix_ms > 0 {
+        when_unix_ms
+    } else {
+        current_unix_ms()
+    };
+    let utc = time::OffsetDateTime::from_unix_timestamp_nanos(
+        i128::from(when_unix_ms).saturating_mul(1_000_000),
+    )
+    .unwrap_or_else(|_| time::OffsetDateTime::from_unix_timestamp(0).unwrap());
+    let offset = time::UtcOffset::local_offset_at(utc).unwrap_or(time::UtcOffset::UTC);
+    utc.to_offset(offset)
+}
+
+pub(crate) fn dated_account_log_file_path(
+    log_dir: &Path,
+    email: &str,
+    when_unix_ms: i64,
+) -> PathBuf {
+    dated_project_log_dir(log_dir, when_unix_ms).join(account_log_file_name(email))
+}
+
+fn account_log_file_name(email: &str) -> String {
     let mut sanitized = String::new();
     for ch in email.trim().to_ascii_lowercase().chars() {
         match ch {
@@ -248,7 +305,7 @@ pub(crate) fn account_log_file_path(log_dir: &Path, email: &str) -> PathBuf {
     if sanitized.is_empty() {
         sanitized = "unknown".to_string();
     }
-    log_dir.join(sanitized.replace('@', "_at_") + ".log")
+    sanitized.replace('@', "_at_") + ".log"
 }
 
 pub(crate) fn join_log_clauses(parts: &[String]) -> String {
@@ -295,98 +352,123 @@ pub(crate) fn ensure_authenticated(
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
 ) -> io::Result<()> {
-    let base_url = runtime.api_client.base_url().to_string();
-    if let Some(session) = get_session(&runtime.account, &base_url) {
-        if !session.cookies.is_empty() {
-            runtime
-                .api_client
-                .load_session_cookies(&session.cookies)
-                .map_err(api_error_to_io_error)?;
-            if let Ok(auth_me) = runtime.api_client.validate_auth_token("") {
-                let email = auth_me.data.email.trim();
-                if !email.is_empty()
-                    && !runtime.account.email.trim().is_empty()
-                    && !email.eq_ignore_ascii_case(runtime.account.email.trim())
-                {
-                    runtime.api_client.clear_session_cookies();
-                    return Err(io::Error::other(format!(
-                        "账号 {} 读取到的登录状态属于另一个账号 {}，请重新登录或检查 auth.json",
-                        runtime.account.email.trim(),
-                        email
-                    )));
-                }
-                if !email.is_empty() {
-                    runtime.account.email = email.to_string();
-                }
-                runtime.account = upsert_session(
-                    runtime.account.clone(),
-                    AuthSession {
-                        base_url: base_url.clone(),
-                        token_type: session.token_type.clone(),
-                        access_token: session.access_token.clone(),
-                        cookies: runtime.api_client.export_session_cookies(),
-                    },
-                );
-                runtime.auth_token.clear();
-                let mut state = state.lock().unwrap();
-                state.save_account(runtime.account.clone())?;
-                return Ok(());
-            }
-            runtime.api_client.clear_session_cookies();
-            state.lock().unwrap().log.line_fmt(format_args!(
-                "账号 {} 的上次登录状态已经过期，继续尝试其他方式恢复登录。",
-                runtime.email()
-            ));
-        }
+    let log = state.lock().unwrap().log.clone();
+    ensure_authenticated_session(
+        &log,
+        &mut runtime.api_client,
+        &mut runtime.account,
+        &mut runtime.auth_token,
+        |account| state.lock().unwrap().save_account(account),
+    )
+}
 
-        let auth_token = build_authorization(&session.token_type, &session.access_token);
-        if !auth_token.is_empty() {
-            if let Ok(auth_me) = runtime.api_client.validate_auth_token(&auth_token) {
-                if !auth_me.data.email.trim().is_empty() {
-                    runtime.account.email = auth_me.data.email.trim().to_string();
-                }
-                runtime.account = upsert_session(
-                    runtime.account.clone(),
-                    AuthSession {
-                        base_url: base_url.clone(),
-                        token_type: session.token_type,
-                        access_token: session.access_token,
-                        cookies: runtime.api_client.export_session_cookies(),
-                    },
-                );
-                runtime.auth_token = auth_token;
-                let mut state = state.lock().unwrap();
-                state.save_account(runtime.account.clone())?;
+pub(crate) fn ensure_authenticated_session<F>(
+    log: &ui::TaskLog,
+    api_client: &mut ApiClient,
+    account: &mut AuthCache,
+    auth_token: &mut String,
+    mut save_account: F,
+) -> io::Result<()>
+where
+    F: FnMut(AuthCache) -> io::Result<()>,
+{
+    let base_url = api_client.base_url().to_string();
+    if let Some(session) = get_session(account, &base_url) {
+        let cached_auth_token = build_authorization(&session.token_type, &session.access_token);
+        if !cached_auth_token.is_empty() {
+            if let Ok(auth_me) = api_client.validate_auth_token(&cached_auth_token) {
+                persist_authenticated_session(
+                    account,
+                    auth_token,
+                    &base_url,
+                    session.token_type.clone(),
+                    session.access_token.clone(),
+                    cached_auth_token,
+                    auth_me,
+                    &mut save_account,
+                )?;
                 return Ok(());
             }
-            state.lock().unwrap().log.line_fmt(format_args!(
+            log.line_fmt(format_args!(
                 "账号 {} 的上次登录信息已经失效，准备重新登录。",
-                runtime.email()
+                account.email.trim()
             ));
         }
     }
 
-    if !password_usable(&runtime.account) {
+    login_with_password_session(
+        log,
+        api_client,
+        account,
+        auth_token,
+        &base_url,
+        save_account,
+    )
+}
+
+fn login_with_password_session<F>(
+    _log: &ui::TaskLog,
+    api_client: &mut ApiClient,
+    account: &mut AuthCache,
+    auth_token: &mut String,
+    base_url: &str,
+    mut save_account: F,
+) -> io::Result<()>
+where
+    F: FnMut(AuthCache) -> io::Result<()>,
+{
+    if !password_usable(account) {
         return Err(io::Error::other(format!(
             "账号 {} 没有保存密码，无法自动重新登录",
-            runtime.email()
+            account.email.trim()
         )));
     }
 
-    let (login_response, auth_token) = runtime
-        .api_client
-        .do_login(&runtime.account.email, &runtime.account.password)
+    let (login_response, new_auth_token) = api_client
+        .do_login(&account.email, &account.password)
         .map_err(api_error_to_io_error)?;
-    runtime.account = cache_from_login(
-        &login_response,
-        &runtime.account.email,
-        &runtime.account.password,
-        &base_url,
-        runtime.api_client.export_session_cookies(),
+    *account = cache_from_login(&login_response, &account.email, &account.password, base_url);
+    *auth_token = new_auth_token;
+    save_account(account.clone())
+}
+
+fn persist_authenticated_session<F>(
+    account: &mut AuthCache,
+    auth_token: &mut String,
+    base_url: &str,
+    token_type: String,
+    access_token: String,
+    resolved_auth_token: String,
+    auth_me: AuthMeResponse,
+    save_account: &mut F,
+) -> io::Result<()>
+where
+    F: FnMut(AuthCache) -> io::Result<()>,
+{
+    let email = auth_me.data.email.trim();
+    if !email.is_empty()
+        && !account.email.trim().is_empty()
+        && !email.eq_ignore_ascii_case(account.email.trim())
+    {
+        return Err(io::Error::other(format!(
+            "账号 {} 读取到的登录状态属于另一个账号 {}，请重新登录或检查 auth.json",
+            account.email.trim(),
+            email
+        )));
+    }
+    if !email.is_empty() {
+        account.email = email.to_string();
+    }
+    *account = upsert_session(
+        account.clone(),
+        AuthSession {
+            base_url: base_url.to_string(),
+            token_type,
+            access_token,
+        },
     );
-    runtime.auth_token = auth_token;
-    let mut state = state.lock().unwrap();
-    state.save_account(runtime.account.clone())
+    *auth_token = resolved_auth_token;
+    save_account(account.clone())
 }
 
 fn reauthenticate(state: &Arc<Mutex<BatchState>>, runtime: &mut AccountRuntime) -> io::Result<()> {
@@ -455,8 +537,73 @@ where
     }
 }
 
+pub(crate) fn with_auth_retry_api_mutation_until_success<T, F, Recover, IsConflict>(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    operation: &str,
+    action: F,
+    mut recover: Recover,
+    is_conflict: IsConflict,
+) -> io::Result<T>
+where
+    F: Fn(&ApiClient, &str) -> Result<T, ApiError>,
+    Recover: FnMut(
+        &ui::CancelFlag,
+        &Arc<Mutex<BatchState>>,
+        &mut AccountRuntime,
+    ) -> io::Result<Option<T>>,
+    IsConflict: Fn(&ApiError) -> bool,
+{
+    let mut attempts = 0usize;
+    loop {
+        ui::check_cancel(cancel_flag)?;
+        attempts += 1;
+        match with_auth_retry_api(state, runtime, &action) {
+            Ok(value) => return Ok(value),
+            Err(error) if is_conflict(&error) => {
+                if let Some(value) = recover(cancel_flag, state, runtime)? {
+                    return Ok(value);
+                }
+                return Err(api_error_to_io_error(error));
+            }
+            Err(error) if is_retryable_api_error(&error) => {
+                log_retryable_api_error(state, runtime.email(), operation, attempts, &error);
+                if let Some(value) = recover(cancel_flag, state, runtime)? {
+                    return Ok(value);
+                }
+                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                    log_retry_exhausted_api_error(
+                        state,
+                        runtime.email(),
+                        operation,
+                        attempts,
+                        &error,
+                    );
+                    return Err(retry_exhausted_api_error(operation, attempts, &error));
+                }
+                ui::sleep_with_cancel(cancel_flag, API_RETRY_BACKOFF)?;
+            }
+            Err(error) => return Err(api_error_to_io_error(error)),
+        }
+    }
+}
+
 pub(crate) fn api_error_to_io_error(error: ApiError) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+pub(crate) fn is_state_conflict_api_error(error: &ApiError) -> bool {
+    if let ApiError::HttpStatus { status, .. } = error
+        && *status == 409
+    {
+        return true;
+    }
+    is_state_conflict_message(&error.to_string())
+}
+
+pub(crate) fn is_state_conflict_io_error(error: &io::Error) -> bool {
+    is_state_conflict_message(&error.to_string())
 }
 
 pub(crate) fn retry_exhausted_api_error(
@@ -613,6 +760,32 @@ fn localized_retry_operation(operation: &str) -> &'static str {
         "minesweeper history" => "扫雷历史接口",
         "minesweeper start" => "扫雷开局接口",
         "minesweeper click" => "扫雷点击接口",
+        "sokoban config" => "推箱子配置接口",
+        "sokoban me" => "推箱子次数查询接口",
+        "sokoban history" => "推箱子历史接口",
+        "sokoban start" => "推箱子开局接口",
+        "sokoban move" => "推箱子移动接口",
+        "lightsout config" => "点灯配置接口",
+        "lightsout me" => "点灯次数查询接口",
+        "lightsout history" => "点灯历史接口",
+        "lightsout start" => "点灯开局接口",
+        "lightsout click" => "点灯点击接口",
+        "maze config" => "迷宫配置接口",
+        "maze me" => "迷宫次数查询接口",
+        "maze history" => "迷宫历史接口",
+        "maze start" => "迷宫开局接口",
+        "maze move" => "迷宫移动接口",
+        "nonogram config" => "数织配置接口",
+        "nonogram me" => "数织次数查询接口",
+        "nonogram history" => "数织历史接口",
+        "nonogram start" => "数织开局接口",
+        "nonogram finish" => "数织提交接口",
+        "flowfree config" => "连线配置接口",
+        "flowfree me" => "连线次数查询接口",
+        "flowfree history" => "连线历史接口",
+        "flowfree start" => "连线开局接口",
+        "flowfree finish" => "连线提交接口",
+        "flowfree abandon" => "连线放弃接口",
         "puzzle15 config" => "华容道配置接口",
         "puzzle15 me" => "华容道次数查询接口",
         "puzzle15 history" => "华容道历史接口",
@@ -651,6 +824,19 @@ fn extract_url_path(message: &str) -> Option<String> {
     } else {
         Some(path.to_string())
     }
+}
+
+fn is_state_conflict_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    message.contains("状态码 409")
+        || message.contains("请求状态冲突")
+        || message.contains("未结束对局")
+        || message.contains("状态还没同步")
+        || lower.contains("active session")
+        || lower.contains("already finished")
+        || lower.contains("already ended")
+        || lower.contains("max active")
+        || lower.contains("conflict")
 }
 
 fn is_retryable_api_message(message: &str) -> bool {
@@ -705,6 +891,8 @@ fn is_non_retryable_api_message(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[test]
     fn daily_limit_429_is_not_retryable() {
@@ -756,6 +944,49 @@ mod tests {
     }
 
     #[test]
+    fn localized_retry_operation_covers_logic_games() {
+        assert_eq!(localized_retry_operation("sokoban move"), "推箱子移动接口");
+        assert_eq!(localized_retry_operation("lightsout click"), "点灯点击接口");
+        assert_eq!(localized_retry_operation("maze move"), "迷宫移动接口");
+        assert_eq!(localized_retry_operation("nonogram finish"), "数织提交接口");
+        assert_eq!(localized_retry_operation("flowfree finish"), "连线提交接口");
+    }
+
+    #[test]
+    fn account_task_stops_after_reentry_limit() {
+        let calls = AtomicUsize::new(0);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let error = run_account_task_until_complete(
+            &cancel_flag,
+            &crate::ui::TaskLog::stdout(),
+            "自动测试",
+            "demo@example.com",
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>(io::Error::other("无法恢复"))
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(calls.load(Ordering::SeqCst), TASK_REENTRY_MAX_RETRIES + 1);
+        assert!(error.to_string().contains("避免阻塞线程"));
+    }
+
+    #[test]
+    fn dated_account_log_file_path_uses_date_project_and_account() {
+        let when = current_unix_ms();
+        let date = format_log_date(when);
+
+        assert_eq!(
+            dated_account_log_file_path(Path::new("log/minesweeper"), "demo@example.com", when),
+            Path::new("log")
+                .join(date)
+                .join("minesweeper")
+                .join("demo_at_example.com.log")
+        );
+    }
+
+    #[test]
     fn retry_exhaustion_returns_timed_out_error_with_step() {
         let error = ApiError::HttpStatus {
             status: 503,
@@ -790,17 +1021,6 @@ mod tests {
             humanize_retryable_api_error(&server_error),
             "服务端暂时异常"
         );
-    }
-
-    #[test]
-    fn same_beijing_day_counts_after_midnight_before_utc_rollover() {
-        let april_30_0100_beijing = 1_777_482_000_000;
-        let april_30_1700_beijing = 1_777_539_600_000;
-
-        assert!(same_beijing_day(
-            april_30_0100_beijing,
-            april_30_1700_beijing
-        ));
     }
 
     #[test]

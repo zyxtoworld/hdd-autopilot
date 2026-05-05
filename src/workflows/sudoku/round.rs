@@ -1,17 +1,20 @@
 use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{SudokuConfigResponse, SudokuFillResponse, SudokuSession, SudokuStartResponse};
 use crate::solver::sudoku;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{RoundProgress, SudokuDifficultySummary, SudokuRoundSummary, SudokuSnapshot};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn difficulty_order(config: &SudokuConfigResponse) -> Vec<String> {
     let mut ordered = Vec::new();
@@ -108,6 +111,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &snapshot,
             SudokuFillAttempt {
                 session_id: snapshot.session_id,
                 row: fill.row,
@@ -197,10 +201,12 @@ fn fill_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &SudokuSnapshot,
     attempt: SudokuFillAttempt,
 ) -> io::Result<SudokuFillResponse> {
     let operation = retry_operation_with_step("sudoku fill", attempt.step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
@@ -214,7 +220,76 @@ fn fill_once(
                 attempt.value,
             )
         },
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &SudokuSnapshot,
+) -> io::Result<Option<SudokuSession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "sudoku me",
+        |client, auth_token| client.get_sudoku_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "sudoku history",
+        |client, auth_token| client.get_sudoku_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &SudokuSnapshot, session: &SudokuSession) -> bool {
+    session.session_id == previous.session_id
+        && (!is_pending_session(session)
+            || session.move_count > previous.move_count
+            || session.user_board != previous.user_board)
+}
+
+fn response_from_session(session: SudokuSession) -> SudokuFillResponse {
+    let won = session.won || session.status.trim().eq_ignore_ascii_case("won");
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    SudokuFillResponse {
+        complete: won,
+        conflicts: session.conflicts.clone(),
+        move_count: session.move_count,
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        user_board: session.user_board.clone(),
+        won,
+        session,
+        ..SudokuFillResponse::default()
+    }
 }
 
 pub(super) fn snapshot_from_start_response(
@@ -431,6 +506,7 @@ fn clear_and_refill_wrong_cells(
             cancel_flag,
             state,
             runtime,
+            snapshot,
             SudokuFillAttempt {
                 session_id: snapshot.session_id,
                 row: fill.row,
@@ -462,6 +538,7 @@ fn clear_and_refill_wrong_cells(
             cancel_flag,
             state,
             runtime,
+            snapshot,
             SudokuFillAttempt {
                 session_id: snapshot.session_id,
                 row: fill.row,

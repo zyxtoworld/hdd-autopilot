@@ -6,7 +6,10 @@ use std::time::Duration;
 use crate::model::{AuthCache, AuthConfig, CheckinResult};
 use crate::storage::upsert_account;
 use crate::ui;
-use crate::workflows::common::{AccountRewardSummary, print_account_reward_summary};
+use crate::workflows::common::{
+    AccountRewardSummary, TASK_REENTRY_MAX_RETRIES, print_account_reward_summary,
+    task_reentry_exhausted_error, task_reentry_limit_reached,
+};
 use crate::workflows::{
     checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15, puzzle_2048,
     sheepmatch, sokoban, sudoku,
@@ -135,10 +138,17 @@ where
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
             Err(error) => {
+                if task_reentry_limit_reached(retry_count) {
+                    log.line_fmt(format_args!(
+                        "【{}｜{}｜{}】连续重进玩法 {} 次仍失败，已停止该项目以避免阻塞线程：{}",
+                        LIMITED_FREE_PLAY_LOG_TITLE, feature, email, retry_count, error
+                    ));
+                    return Err(task_reentry_exhausted_error(feature, retry_count, &error));
+                }
                 retry_count += 1;
                 log.line_fmt(format_args!(
-                    "【{}｜{}｜{}】这次没有跑完：{}。不会跳过，会等一下重新进去续残局/剩余次数。",
-                    LIMITED_FREE_PLAY_LOG_TITLE, feature, email, error
+                    "【{}｜{}｜{}】这次没有跑完：{}。会等一下重新进去续残局/剩余次数（第 {}/{} 次重试）。",
+                    LIMITED_FREE_PLAY_LOG_TITLE, feature, email, error, retry_count, TASK_REENTRY_MAX_RETRIES
                 ));
                 ui::sleep_with_cancel(cancel_flag, LIMITED_FEATURE_RETRY_BACKOFF)?;
             }

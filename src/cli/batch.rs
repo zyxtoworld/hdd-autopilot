@@ -74,13 +74,8 @@ fn add_one_account(config: &mut AuthConfig, auth_path: &Path) {
         let client = crate::api::ApiClient::new(&config.base_url);
         match client.do_login(&email, &password) {
             Ok((login_response, _auth_token)) => {
-                let account = cache_from_login(
-                    &login_response,
-                    &email,
-                    &password,
-                    client.base_url(),
-                    client.export_session_cookies(),
-                );
+                let account =
+                    cache_from_login(&login_response, &email, &password, client.base_url());
                 *config = upsert_account(config.clone(), account.clone());
                 if let Err(error) = save_cache(auth_path, config.clone()) {
                     println!("保存账号失败：{}", error);

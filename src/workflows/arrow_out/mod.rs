@@ -12,8 +12,9 @@ use crate::solver::arrow_out;
 use crate::ui;
 use crate::workflows::common::{
     AccountRewardSummary, AccountRuntime, BatchState, ServerClockSnapshot, append_account_log_line,
-    current_unix_ms, ensure_authenticated, format_amount, print_account_reward_summary,
-    with_auth_retry_api_until_success,
+    current_unix_ms, ensure_authenticated, format_amount, format_log_time,
+    is_state_conflict_api_error, is_state_conflict_io_error, print_account_reward_summary,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 pub const DONE_MESSAGE: &str = "自动箭头逃离已停止。";
@@ -38,6 +39,11 @@ struct LiveRewardTracker {
 struct ActiveArrowOutSession {
     session: ArrowOutSession,
     clock: ServerClockSnapshot,
+}
+
+enum FinishSessionOutcome {
+    Response(ArrowOutFinishResponse),
+    Recovered(ArrowOutSession),
 }
 
 impl LiveRewardTracker {
@@ -216,48 +222,28 @@ fn run_account_loop(
         let clicks = planned_clicks(&config, session, click_ids);
         let click_count = clicks.len();
         sleep_before_finish(cancel_flag, &active_session, &clicks)?;
-        let response = match finish_session(cancel_flag, state, runtime, session.session_id, clicks)
-        {
-            Ok(response) => response,
-            Err(error) if is_state_conflict_error(&error) => {
-                let email = runtime.email().to_string();
-                state.lock().unwrap().log.line_fmt(format_args!(
-                    "账号 {} 的箭头逃离第 {} 关结算状态冲突，重新读取服务端结果后继续。",
-                    email,
-                    session.stage + 1
-                ));
-                if let Some(session) =
-                    recover_finished_session(cancel_flag, state, runtime, session.session_id)?
-                {
-                    if session_won(&session) {
-                        record_successful_round(
-                            state,
-                            &email,
-                            tracker,
-                            &mut total_reward,
-                            &mut cleared,
-                            SuccessfulRoundRecord {
-                                stage: session.stage + 1,
-                                click_count,
-                                reward: session.reward_amount,
-                            },
-                        )?;
-                    } else {
-                        append_account_log_line(
-                            &state.lock().unwrap().result_log_dir,
-                            &email,
-                            &format!(
-                                "{} 第 {} 关结算后不是通关状态：status={}\n",
-                                current_unix_ms(),
-                                session.stage + 1,
-                                session.status
-                            ),
-                        )?;
-                    }
-                }
+        let finish_outcome = finish_session(
+            cancel_flag,
+            state,
+            runtime,
+            session.session_id,
+            session.stage + 1,
+            clicks,
+        )?;
+        let response = match finish_outcome {
+            FinishSessionOutcome::Response(response) => response,
+            FinishSessionOutcome::Recovered(session) => {
+                record_recovered_finished_session(
+                    state,
+                    runtime.email(),
+                    tracker,
+                    &mut total_reward,
+                    &mut cleared,
+                    &session,
+                    click_count,
+                )?;
                 continue;
             }
-            Err(error) => return Err(error),
         };
         let reward = reward_from_finish(&response);
         if !response.ok || !finish_won(&response) {
@@ -266,7 +252,7 @@ fn run_account_loop(
                 runtime.email(),
                 &format!(
                     "{} 第 {} 关结算失败：status={} resolution={}\n",
-                    current_unix_ms(),
+                    format_log_time(current_unix_ms()),
                     session.stage + 1,
                     response.status,
                     response.resolution
@@ -352,7 +338,7 @@ fn pending_or_new_session(
         |client, auth_token| client.start_arrow_out(auth_token),
     ) {
         Ok(response) => response,
-        Err(error) if is_state_conflict_error(&error) => {
+        Err(error) if is_state_conflict_io_error(&error) => {
             let email = runtime.email().to_string();
             state.lock().unwrap().log.line_fmt(format_args!(
                 "账号 {} 的箭头逃离开局状态冲突，重新读取当前残局。",
@@ -381,16 +367,29 @@ fn finish_session(
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     session_id: i32,
+    stage: i32,
     clicks: Vec<ArrowOutClick>,
-) -> io::Result<ArrowOutFinishResponse> {
-    with_auth_retry_api_until_success(
+) -> io::Result<FinishSessionOutcome> {
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         "arrow-out finish",
         |client, auth_token| {
-            client.finish_arrow_out(auth_token, session_id, clicks.clone(), RESULT_WON)
+            client
+                .finish_arrow_out(auth_token, session_id, clicks.clone(), RESULT_WON)
+                .map(FinishSessionOutcome::Response)
         },
+        |cancel_flag, state, runtime| {
+            state.lock().unwrap().log.line_fmt(format_args!(
+                "账号 {} 的箭头逃离第 {} 关结算结果暂时不确定，重新读取服务端结果后继续。",
+                runtime.email(),
+                stage
+            ));
+            recover_finished_session(cancel_flag, state, runtime, session_id)
+                .map(|session| session.map(FinishSessionOutcome::Recovered))
+        },
+        is_state_conflict_api_error,
     )
 }
 
@@ -400,12 +399,17 @@ fn abandon_session(
     runtime: &mut AccountRuntime,
     session_id: i32,
 ) -> io::Result<ArrowOutFinishResponse> {
-    with_auth_retry_api_until_success(
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         "arrow-out abandon",
         |client, auth_token| client.abandon_arrow_out(auth_token, session_id),
+        |cancel_flag, state, runtime| {
+            recover_finished_session(cancel_flag, state, runtime, session_id)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
 }
 
@@ -509,6 +513,24 @@ fn reward_from_finish(response: &ArrowOutFinishResponse) -> f64 {
     }
 }
 
+fn response_from_session(session: ArrowOutSession) -> ArrowOutFinishResponse {
+    let won = session_won(&session);
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    ArrowOutFinishResponse {
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        won,
+        session,
+        ..ArrowOutFinishResponse::default()
+    }
+}
+
 fn max_rounds_from_env() -> Option<usize> {
     std::env::var("HDD_AUTOPILOT_ARROW_OUT_MAX_ROUNDS")
         .ok()
@@ -538,7 +560,7 @@ fn record_successful_round(
         email,
         &format!(
             "{} 第 {} 关通关，点击 {} 次，收益 {}，累计 {}\n",
-            current_unix_ms(),
+            format_log_time(current_unix_ms()),
             record.stage,
             record.click_count,
             format_amount(record.reward),
@@ -556,14 +578,40 @@ fn record_successful_round(
     Ok(())
 }
 
-fn is_state_conflict_error(error: &io::Error) -> bool {
-    let message = error.to_string();
-    message.contains("状态码 409")
-        || message.contains("请求状态冲突")
-        || message.contains("未结束对局")
-        || message.contains("状态还没同步")
-        || message.contains("active session")
-        || message.contains("max active")
+fn record_recovered_finished_session(
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    tracker: &LiveRewardTracker,
+    total_reward: &mut f64,
+    cleared: &mut usize,
+    session: &ArrowOutSession,
+    click_count: usize,
+) -> io::Result<()> {
+    if session_won(session) {
+        record_successful_round(
+            state,
+            email,
+            tracker,
+            total_reward,
+            cleared,
+            SuccessfulRoundRecord {
+                stage: session.stage + 1,
+                click_count,
+                reward: session.reward_amount,
+            },
+        )
+    } else {
+        append_account_log_line(
+            &state.lock().unwrap().result_log_dir,
+            email,
+            &format!(
+                "{} 第 {} 关结算后不是通关状态：status={}\n",
+                format_log_time(current_unix_ms()),
+                session.stage + 1,
+                session.status
+            ),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -620,6 +668,6 @@ mod tests {
         let error =
             io::Error::other("请求失败了（状态码 409）：请求状态冲突。可能已有未结束对局。");
 
-        assert!(is_state_conflict_error(&error));
+        assert!(is_state_conflict_io_error(&error));
     }
 }

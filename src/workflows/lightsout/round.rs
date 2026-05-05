@@ -1,16 +1,19 @@
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{LightsoutClickResponse, LightsoutConfigResponse, LightsoutSession};
 use crate::solver::lightsout;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
+    is_state_conflict_api_error, retry_operation_with_step, sleep_min_interval,
+    with_auth_retry_api_mutation_until_success, with_auth_retry_api_until_success,
 };
 
 use super::types::{LightsoutDifficultySummary, LightsoutRoundSummary, RoundProgress};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn is_pending_session(session: &LightsoutSession) -> bool {
     if session.session_id <= 0 || session.ended_at_ms.is_some() || session.won {
@@ -70,6 +73,7 @@ pub(super) fn play_round(
             cancel_flag,
             state,
             runtime,
+            &session,
             StepAttempt {
                 session_id: session.session_id,
                 r,
@@ -127,10 +131,12 @@ fn step_once(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    previous: &LightsoutSession,
     attempt: StepAttempt,
 ) -> io::Result<LightsoutClickResponse> {
     let operation = retry_operation_with_step("lightsout click", attempt.step_number);
-    with_auth_retry_api_until_success(
+    let previous = previous.clone();
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
@@ -138,7 +144,72 @@ fn step_once(
         |client, auth_token| {
             client.click_lightsout(auth_token, attempt.session_id, attempt.r, attempt.c)
         },
+        |cancel_flag, state, runtime| {
+            recover_progressed_session(cancel_flag, state, runtime, &previous)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_progressed_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    previous: &LightsoutSession,
+) -> io::Result<Option<LightsoutSession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "lightsout me",
+        |client, auth_token| client.get_lightsout_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if is_progressed_session(previous, &session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == previous.session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "lightsout history",
+        |client, auth_token| client.get_lightsout_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| is_progressed_session(previous, session)))
+}
+
+fn is_progressed_session(previous: &LightsoutSession, session: &LightsoutSession) -> bool {
+    session.session_id == previous.session_id
+        && (!is_pending_session(session)
+            || session.click_count > previous.click_count
+            || session.cells != previous.cells)
+}
+
+fn response_from_session(session: LightsoutSession) -> LightsoutClickResponse {
+    let won = session.won || session.status.trim().eq_ignore_ascii_case("won");
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    LightsoutClickResponse {
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        won,
+        session,
+        ..LightsoutClickResponse::default()
+    }
 }
 
 fn merge_session(

@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::model::{
     FlowfreeAbandonResponse, FlowfreeConfigResponse, FlowfreeFinishResponse, FlowfreeMove,
@@ -10,10 +10,13 @@ use crate::solver::flowfree;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, ServerClockSnapshot, current_unix_ms, is_pending_round_status,
+    is_state_conflict_api_error, with_auth_retry_api_mutation_until_success,
     with_auth_retry_api_until_success,
 };
 
 use super::types::{FlowfreeDifficultySummary, FlowfreeRoundSummary, RoundProgress};
+
+const STATE_SYNC_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn is_pending_session(session: &FlowfreeSession) -> bool {
     if session.session_id <= 0 || session.ended_at_ms.is_some() || session.won {
@@ -171,12 +174,17 @@ fn abandon_unsolvable_once(
     runtime: &mut AccountRuntime,
     session_id: i32,
 ) -> io::Result<FlowfreeAbandonResponse> {
-    with_auth_retry_api_until_success(
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
         "flowfree abandon",
         |client, auth_token| client.abandon_flowfree(auth_token, session_id),
+        |cancel_flag, state, runtime| {
+            recover_settled_session(cancel_flag, state, runtime, session_id)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
 }
 
@@ -191,7 +199,7 @@ fn finish_once(
     runtime: &mut AccountRuntime,
     attempt: FinishAttempt,
 ) -> io::Result<FlowfreeFinishResponse> {
-    with_auth_retry_api_until_success(
+    with_auth_retry_api_mutation_until_success(
         cancel_flag,
         state,
         runtime,
@@ -199,7 +207,65 @@ fn finish_once(
         |client, auth_token| {
             client.finish_flowfree(auth_token, attempt.session_id, attempt.moves.clone())
         },
+        |cancel_flag, state, runtime| {
+            recover_settled_session(cancel_flag, state, runtime, attempt.session_id)
+                .map(|session| session.map(response_from_session))
+        },
+        is_state_conflict_api_error,
     )
+}
+
+fn recover_settled_session(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    session_id: i32,
+) -> io::Result<Option<FlowfreeSession>> {
+    ui::sleep_with_cancel(cancel_flag, STATE_SYNC_RETRY_DELAY)?;
+    let me = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "flowfree me",
+        |client, auth_token| client.get_flowfree_me(auth_token),
+    )?;
+    if let Some(session) = me.active_session {
+        if session.session_id == session_id && !is_pending_session(&session) {
+            return Ok(Some(session));
+        }
+        if session.session_id == session_id {
+            return Ok(None);
+        }
+    }
+    let history = with_auth_retry_api_until_success(
+        cancel_flag,
+        state,
+        runtime,
+        "flowfree history",
+        |client, auth_token| client.get_flowfree_history(auth_token),
+    )?;
+    Ok(history
+        .items
+        .into_iter()
+        .find(|session| session.session_id == session_id && !is_pending_session(session)))
+}
+
+fn response_from_session(session: FlowfreeSession) -> FlowfreeFinishResponse {
+    let won = session.won || session.status.trim().eq_ignore_ascii_case("won");
+    let status = if session.status.trim().is_empty() {
+        if won { "won" } else { "pending" }.to_string()
+    } else {
+        session.status.clone()
+    };
+    FlowfreeFinishResponse {
+        ok: true,
+        resolution: status.clone(),
+        reward_amount: session.reward_amount,
+        status,
+        won,
+        session,
+        ..FlowfreeFinishResponse::default()
+    }
 }
 
 fn sleep_before_finish(

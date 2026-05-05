@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::model::{AuthCache, AuthConfig, AuthSession, LoginResponse, SessionCookie};
+use crate::model::{AuthCache, AuthConfig, AuthSession, LoginResponse};
 use url::Url;
 
 pub fn normalize_token_type(token_type: &str) -> String {
@@ -54,7 +54,6 @@ pub fn cache_from_login(
     fallback_email: &str,
     password: &str,
     base_url: &str,
-    cookies: Vec<SessionCookie>,
 ) -> AuthCache {
     let mut email = login_response.data.user.email.trim().to_string();
     if email.is_empty() {
@@ -64,14 +63,12 @@ pub fn cache_from_login(
         base_url: normalize_base_url(base_url),
         token_type: normalize_token_type(&login_response.data.token_type),
         access_token: login_response.data.access_token.trim().to_string(),
-        cookies: normalize_cookies(cookies),
     };
     let mut account = AuthCache {
         email,
         password: password.trim().to_string(),
         token_type: session.token_type.clone(),
         access_token: session.access_token.clone(),
-        cookies: session.cookies.clone(),
         ..AuthCache::default()
     };
     if session_usable(&session) {
@@ -80,42 +77,14 @@ pub fn cache_from_login(
     normalize_account(account)
 }
 
-fn normalize_cookie(mut cookie: SessionCookie) -> SessionCookie {
-    cookie.name = cookie.name.trim().to_string();
-    cookie.value = cookie.value.trim().to_string();
-    cookie.domain = cookie.domain.trim().to_string();
-    cookie.path = cookie.path.trim().to_string();
-    cookie.expires_at = cookie.expires_at.trim().to_string();
-    cookie
-}
-
-fn normalize_cookies(cookies: Vec<SessionCookie>) -> Vec<SessionCookie> {
-    let mut result = Vec::with_capacity(cookies.len());
-    let mut seen = HashMap::<String, usize>::with_capacity(cookies.len());
-    for cookie in cookies.into_iter().map(normalize_cookie) {
-        if cookie.name.is_empty() || cookie.value.is_empty() {
-            continue;
-        }
-        let key = format!("{}\0{}\0{}", cookie.name, cookie.domain, cookie.path);
-        if seen.contains_key(&key) {
-            continue;
-        }
-        seen.insert(key, result.len());
-        result.push(cookie);
-    }
-    result
-}
-
 fn session_usable(session: &AuthSession) -> bool {
     !build_authorization(&session.token_type, &session.access_token).is_empty()
-        || !session.cookies.is_empty()
 }
 
 fn normalize_session(mut session: AuthSession) -> AuthSession {
     session.base_url = normalize_base_url(&session.base_url);
     session.token_type = normalize_token_type(&session.token_type);
     session.access_token = session.access_token.trim().to_string();
-    session.cookies = normalize_cookies(session.cookies);
     session
 }
 
@@ -141,7 +110,6 @@ pub(super) fn normalize_account(mut account: AuthCache) -> AuthCache {
     account.password = account.password.trim().to_string();
     account.token_type = normalize_token_type(&account.token_type);
     account.access_token = account.access_token.trim().to_string();
-    account.cookies = normalize_cookies(account.cookies);
     account.sessions = normalize_sessions(account.sessions);
     account
 }
@@ -156,7 +124,7 @@ pub(super) fn find_legacy_session(account: &AuthCache, base_url: &str) -> Option
 
 pub(super) fn normalize_account_for_base_url(account: AuthCache, base_url: &str) -> AuthCache {
     let mut account = normalize_account(account);
-    if (account.cookies.is_empty() || !cache_usable(&account))
+    if !cache_usable(&account)
         && let Some(session) = find_legacy_session(&account, base_url)
     {
         if account.token_type.is_empty() {
@@ -165,11 +133,7 @@ pub(super) fn normalize_account_for_base_url(account: AuthCache, base_url: &str)
         if account.access_token.is_empty() {
             account.access_token = session.access_token.clone();
         }
-        if account.cookies.is_empty() {
-            account.cookies = session.cookies;
-        }
     }
-    account.cookies = normalize_cookies(account.cookies);
     account.sessions.clear();
     normalize_account(account)
 }
@@ -212,14 +176,13 @@ pub fn find_session(sessions: &[AuthSession], base_url: &str) -> Option<usize> {
 
 pub fn get_session(account: &AuthCache, base_url: &str) -> Option<AuthSession> {
     let account = normalize_account_for_base_url(account.clone(), base_url);
-    if !cache_usable(&account) && account.cookies.is_empty() {
+    if !cache_usable(&account) {
         return None;
     }
     Some(AuthSession {
         base_url: normalize_base_url(base_url),
         token_type: account.token_type,
         access_token: account.access_token,
-        cookies: account.cookies,
     })
 }
 
@@ -229,13 +192,11 @@ pub fn upsert_session(account: AuthCache, session: AuthSession) -> AuthCache {
     if !session_usable(&session) {
         account.token_type.clear();
         account.access_token.clear();
-        account.cookies.clear();
         account.sessions.clear();
         return normalize_account(account);
     }
     account.token_type = session.token_type;
     account.access_token = session.access_token;
-    account.cookies = session.cookies;
     account.sessions.clear();
     normalize_account(account)
 }
@@ -262,9 +223,6 @@ pub fn upsert_account(mut config: AuthConfig, account: AuthCache) -> AuthConfig 
             merged.token_type = account.token_type.clone();
             merged.access_token = account.access_token.clone();
         }
-        if !account.cookies.is_empty() {
-            merged.cookies = account.cookies.clone();
-        }
         config.accounts[index] = normalize_account_for_base_url(merged, &config.base_url);
     } else {
         config.accounts.push(account);
@@ -286,8 +244,5 @@ fn compact_account_for_save(account: AuthCache, base_url: &str) -> AuthCache {
     let mut account = normalize_account_for_base_url(account, base_url);
     account.token_type = normalize_token_type(&account.token_type);
     account.sessions.clear();
-    if account.cookies.is_empty() {
-        account.cookies = Vec::new();
-    }
     account
 }
