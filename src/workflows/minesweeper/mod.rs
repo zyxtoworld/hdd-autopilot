@@ -132,7 +132,7 @@ pub fn run_batch(
     Ok(state.lock().unwrap().config.clone())
 }
 
-pub fn run_account_for_free_play_with_log(
+pub fn run_account_for_limited_free_play_with_log(
     config: &AuthConfig,
     account: AuthCache,
     cancel_flag: &ui::CancelFlag,

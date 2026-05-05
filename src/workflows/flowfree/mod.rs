@@ -23,8 +23,8 @@ use self::log::{
     localized_difficulty, localized_difficulty_list, log_round_result,
 };
 use self::round::{
-    is_active_session_error, is_daily_limit_error, is_pending_session, merge_round_into_summary,
-    play_round,
+    PlayRoundRequest, is_active_session_error, is_daily_limit_error, is_pending_session,
+    merge_round_into_summary, play_round,
 };
 use self::types::{FlowfreeDifficultySummary, FlowfreeRoundSummary, RoundProgress};
 
@@ -129,7 +129,7 @@ pub fn run_batch(
     Ok(state.lock().unwrap().config.clone())
 }
 
-pub fn run_account_for_free_play_with_log(
+pub fn run_account_for_limited_free_play_with_log(
     config: &AuthConfig,
     account: AuthCache,
     cancel_flag: &ui::CancelFlag,
@@ -297,11 +297,13 @@ fn drain_pending_session(
             cancel_flag,
             state,
             runtime,
-            config,
-            item.clone(),
-            true,
-            progress,
-            me.server_now_ms,
+            PlayRoundRequest {
+                config,
+                session: item.clone(),
+                continued: true,
+                progress,
+                server_now_ms: me.server_now_ms,
+            },
         )?;
         result.remaining_after = remaining;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
@@ -407,11 +409,13 @@ fn run_difficulty(
                         cancel_flag,
                         state,
                         runtime,
-                        config,
-                        item.clone(),
-                        true,
-                        pending_progress,
-                        refreshed.server_now_ms,
+                        PlayRoundRequest {
+                            config,
+                            session: item.clone(),
+                            continued: true,
+                            progress: pending_progress,
+                            server_now_ms: refreshed.server_now_ms,
+                        },
                     )?;
                     result.remaining_after = pending_remaining;
                     if item.difficulty == difficulty {
@@ -442,11 +446,13 @@ fn run_difficulty(
             cancel_flag,
             state,
             runtime,
-            config,
-            start.session,
-            false,
-            progress,
-            server_now_ms,
+            PlayRoundRequest {
+                config,
+                session: start.session,
+                continued: false,
+                progress,
+                server_now_ms,
+            },
         )?;
         result.remaining_after = current_remaining;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;

@@ -28,7 +28,7 @@ $scratchDoneMarker = '自动随机刮刮乐已完成。'
 $sheepDoneMarker = '自动羊了个羊已完成。'
 $sudokuDoneMarker = '自动数独已完成。'
 $arrowOutDoneMarker = '自动箭头逃离已停止。'
-$freeDoneMarker = '全自动运行所有有次数限制白嫖玩法已完成。'
+$freeDoneMarker = '全自动运行所有有次数限制的白嫖玩法已完成。'
 
 if (!(Test-Path $artifactDir)) {
     New-Item -ItemType Directory -Path $artifactDir | Out-Null

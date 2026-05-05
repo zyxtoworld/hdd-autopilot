@@ -22,16 +22,27 @@ pub(super) fn is_pending_session(session: &FlowfreeSession) -> bool {
     is_pending_round_status(&session.status)
 }
 
+pub(super) struct PlayRoundRequest<'a> {
+    pub(super) config: &'a FlowfreeConfigResponse,
+    pub(super) session: FlowfreeSession,
+    pub(super) continued: bool,
+    pub(super) progress: RoundProgress,
+    pub(super) server_now_ms: i64,
+}
+
 pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    config: &FlowfreeConfigResponse,
-    start: FlowfreeSession,
-    continued: bool,
-    progress: RoundProgress,
-    server_now_ms: i64,
+    request: PlayRoundRequest<'_>,
 ) -> io::Result<FlowfreeRoundSummary> {
+    let PlayRoundRequest {
+        config,
+        session: start,
+        continued,
+        progress,
+        server_now_ms,
+    } = request;
     let started = Instant::now();
     let mut session = start;
     let steps = match flowfree::solve(&session) {

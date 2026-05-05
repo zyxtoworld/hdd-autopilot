@@ -101,7 +101,7 @@ pub fn run_batch_with_title(
     let accounts = config.accounts.clone();
     let base_url = config.base_url.clone();
     log.line_fmt(format_args!(
-        "开始{}，本次会处理 {} 个账号；无次数限制玩法会持续运行，按 ESC 停止。",
+        "开始{}，本次会处理 {} 个账号；无次数限制的白嫖玩法会持续运行，按 ESC 停止。",
         title,
         accounts.len()
     ));
@@ -213,7 +213,7 @@ fn run_account_loop(
                 config.max_clicks
             )));
         }
-        let clicks = planned_clicks(&config, &session, click_ids);
+        let clicks = planned_clicks(&config, session, click_ids);
         let click_count = clicks.len();
         sleep_before_finish(cancel_flag, &active_session, &clicks)?;
         let response = match finish_session(cancel_flag, state, runtime, session.session_id, clicks)
@@ -236,9 +236,11 @@ fn run_account_loop(
                             tracker,
                             &mut total_reward,
                             &mut cleared,
-                            session.stage + 1,
-                            click_count,
-                            session.reward_amount,
+                            SuccessfulRoundRecord {
+                                stage: session.stage + 1,
+                                click_count,
+                                reward: session.reward_amount,
+                            },
                         )?;
                     } else {
                         append_account_log_line(
@@ -278,9 +280,11 @@ fn run_account_loop(
             tracker,
             &mut total_reward,
             &mut cleared,
-            response.session.stage + 1,
-            click_count,
-            reward,
+            SuccessfulRoundRecord {
+                stage: response.session.stage + 1,
+                click_count,
+                reward,
+            },
         )?;
     }
     Ok(total_reward)
@@ -512,18 +516,22 @@ fn max_rounds_from_env() -> Option<usize> {
         .filter(|value| *value > 0)
 }
 
+struct SuccessfulRoundRecord {
+    stage: i32,
+    click_count: usize,
+    reward: f64,
+}
+
 fn record_successful_round(
     state: &Arc<Mutex<BatchState>>,
     email: &str,
     tracker: &LiveRewardTracker,
     total_reward: &mut f64,
     cleared: &mut usize,
-    stage: i32,
-    click_count: usize,
-    reward: f64,
+    record: SuccessfulRoundRecord,
 ) -> io::Result<()> {
-    *total_reward += reward;
-    tracker.add(reward);
+    *total_reward += record.reward;
+    tracker.add(record.reward);
     *cleared += 1;
     append_account_log_line(
         &state.lock().unwrap().result_log_dir,
@@ -531,9 +539,9 @@ fn record_successful_round(
         &format!(
             "{} 第 {} 关通关，点击 {} 次，收益 {}，累计 {}\n",
             current_unix_ms(),
-            stage,
-            click_count,
-            format_amount(reward),
+            record.stage,
+            record.click_count,
+            format_amount(record.reward),
             format_amount(*total_reward)
         ),
     )?;

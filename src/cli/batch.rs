@@ -6,10 +6,15 @@ use crate::model::AuthConfig;
 use crate::storage::{cache_from_login, load_cache, save_cache, upsert_account};
 use crate::ui;
 use crate::workflows::common::format_amount;
-use crate::workflows::free_play::{FreeFeatureRunners, execute_all_free_features};
+use crate::workflows::limited_free_play::{
+    LimitedFreeFeatureRunners, execute_all_limited_free_features,
+};
+use crate::workflows::unlimited_free_play::{
+    UnlimitedFreeFeature, UnlimitedFreeFeatureRunners, execute_all_unlimited_free_features,
+};
 use crate::workflows::{
-    arrow_out, checkin, flowfree, lightsout, maze, memory, minesweeper, nonogram, puzzle_15,
-    puzzle_2048, scratch, sheepmatch, sokoban, sudoku,
+    arrow_out, checkin, flowfree, lightsout, limited_free_play, maze, memory, minesweeper,
+    nonogram, puzzle_15, puzzle_2048, scratch, sheepmatch, sokoban, sudoku, unlimited_free_play,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -112,9 +117,9 @@ fn show_batch_feature_hub(config: &mut AuthConfig, auth_path: &Path) -> bool {
             return false;
         };
         match choice.as_str() {
-            "1" if show_free_feature_menu(config, auth_path) => return true,
+            "1" if show_free_play_menu(config, auth_path) => return true,
             "1" => {}
-            "2" if show_paid_feature_menu(config, auth_path) => return true,
+            "2" if show_paid_play_menu(config, auth_path) => return true,
             "2" => {}
             "3" => return false,
             "4" => return true,
@@ -123,15 +128,15 @@ fn show_batch_feature_hub(config: &mut AuthConfig, auth_path: &Path) -> bool {
     }
 }
 
-fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+fn show_free_play_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
     loop {
         render_menu_page();
         print_account_summary(config, auth_path);
         println!();
         let Ok(choice) = prompt_choice(
             &[
-                "1. 有次数限制",
-                "2. 无次数限制",
+                "1. 有次数限制的白嫖玩法",
+                "2. 无次数限制的白嫖玩法",
                 "3. 返回上一级菜单",
                 "4. 退出脚本",
             ],
@@ -143,9 +148,9 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
             return false;
         };
         match choice.as_str() {
-            "1" if show_limited_free_feature_menu(config, auth_path) => return true,
+            "1" if show_limited_free_play_menu(config, auth_path) => return true,
             "1" => {}
-            "2" if show_unlimited_free_feature_menu(config, auth_path) => return true,
+            "2" if show_unlimited_free_play_menu(config, auth_path) => return true,
             "2" => {}
             "3" => return false,
             "4" => return true,
@@ -154,14 +159,14 @@ fn show_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
     }
 }
 
-fn show_limited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+fn show_limited_free_play_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
     loop {
         render_menu_page();
         print_account_summary(config, auth_path);
         println!();
         let Ok(choice) = prompt_choice(
             &[
-                "1. 全自动运行所有有次数限制白嫖玩法",
+                "1. 全自动运行所有有次数限制的白嫖玩法",
                 "2. 自动扫雷",
                 "3. 自动羊了个羊",
                 "4. 自动谜题2048",
@@ -187,7 +192,7 @@ fn show_limited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> 
             return false;
         };
         match choice.as_str() {
-            "1" => run_all_free_features(config, auth_path),
+            "1" => run_all_limited_free_features(config, auth_path),
             "2" => run_minesweeper_feature(config, auth_path),
             "3" => run_sheepmatch_feature(config, auth_path),
             "4" => run_puzzle_2048_feature(config, auth_path),
@@ -207,14 +212,14 @@ fn show_limited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> 
     }
 }
 
-fn show_unlimited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+fn show_unlimited_free_play_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
     loop {
         render_menu_page();
         print_account_summary(config, auth_path);
         println!();
         let Ok(choice) = prompt_choice(
             &[
-                "1. 全自动运行所有无次数限制白嫖玩法",
+                "1. 全自动运行所有无次数限制的白嫖玩法",
                 "2. 自动箭头逃离",
                 "3. 返回上一级菜单",
                 "4. 退出脚本",
@@ -236,7 +241,7 @@ fn show_unlimited_free_feature_menu(config: &mut AuthConfig, auth_path: &Path) -
     }
 }
 
-fn show_paid_feature_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
+fn show_paid_play_menu(config: &mut AuthConfig, auth_path: &Path) -> bool {
     loop {
         render_menu_page();
         print_account_summary(config, auth_path);
@@ -591,7 +596,58 @@ fn run_arrow_out_feature(config: &mut AuthConfig, auth_path: &Path) {
 }
 
 fn run_all_unlimited_free_features(config: &mut AuthConfig, auth_path: &Path) {
-    run_arrow_out_with_title(config, auth_path, "全自动运行所有无次数限制白嫖玩法");
+    if config.accounts.is_empty() {
+        println!("当前还没有可用账号。");
+        return;
+    }
+    let auth_path = auth_path.to_path_buf();
+    let save_auth_path = auth_path.clone();
+    let run_auth_path = auth_path.clone();
+    let original_config = config.clone();
+    match ui::run_with_escape_interrupt(
+        &format!(
+            "开始{}，本次会处理 {} 个账号；无次数限制的白嫖玩法会持续运行，按 ESC 停止。",
+            unlimited_free_play::TASK_TITLE,
+            original_config.accounts.len()
+        ),
+        Some(unlimited_free_play::DONE_MESSAGE),
+        move |cancel_flag, log| {
+            execute_all_unlimited_free_features(
+                original_config,
+                &run_auth_path,
+                &cancel_flag,
+                &log,
+                UnlimitedFreeFeatureRunners {
+                    features: vec![UnlimitedFreeFeature {
+                        title: "自动箭头逃离",
+                        run: Arc::new(move |config, auth_path, cancel_flag, log| {
+                            arrow_out::run_batch_with_title(
+                                config,
+                                auth_path,
+                                cancel_flag,
+                                log,
+                                unlimited_free_play::TASK_TITLE,
+                            )
+                        }),
+                    }],
+                    save_merged_config: Box::new(move |merged_config| {
+                        save_cache(&save_auth_path, merged_config)
+                    }),
+                },
+            )
+        },
+    ) {
+        Ok(Some(updated_config)) => {
+            *config = updated_config;
+            print_account_summary(config, &auth_path);
+        }
+        Ok(None) => {
+            if let Ok(latest) = load_cache(&auth_path) {
+                *config = latest;
+            }
+        }
+        Err(error) => println!("{}运行失败：{}", unlimited_free_play::TASK_TITLE, error),
+    }
 }
 
 fn run_arrow_out_with_title(config: &mut AuthConfig, auth_path: &Path, title: &'static str) {
@@ -604,7 +660,7 @@ fn run_arrow_out_with_title(config: &mut AuthConfig, auth_path: &Path, title: &'
     let original_config = config.clone();
     match ui::run_with_escape_interrupt(
         &format!(
-            "开始{}，本次会处理 {} 个账号；无次数限制玩法会持续运行，按 ESC 停止。",
+            "开始{}，本次会处理 {} 个账号；无次数限制的白嫖玩法会持续运行，按 ESC 停止。",
             title,
             original_config.accounts.len()
         ),
@@ -632,7 +688,7 @@ fn run_arrow_out_with_title(config: &mut AuthConfig, auth_path: &Path, title: &'
     }
 }
 
-fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
+fn run_all_limited_free_features(config: &mut AuthConfig, auth_path: &Path) {
     if config.accounts.is_empty() {
         println!("当前还没有可用账号。");
         return;
@@ -642,26 +698,27 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
     let original_config = config.clone();
     match ui::run_with_escape_interrupt(
         &format!(
-            "开始全自动运行所有有次数限制白嫖玩法，本次会处理 {} 个账号；每个账号会并发运行所有有次数限制白嫖项目。",
+            "开始{}，本次会处理 {} 个账号；每个账号会并发运行所有有次数限制的白嫖项目。",
+            limited_free_play::TASK_TITLE,
             original_config.accounts.len()
         ),
-        Some("全自动运行所有有次数限制白嫖玩法已完成。"),
+        Some(limited_free_play::DONE_MESSAGE),
         move |cancel_flag, log| {
             let checkin_log = log.clone();
             let minesweeper_log = log.clone();
             let sheepmatch_log = log.clone();
-            execute_all_free_features(
+            execute_all_limited_free_features(
                 original_config,
                 &cancel_flag,
                 &log,
-                FreeFeatureRunners {
+                LimitedFreeFeatureRunners {
                     run_checkin: Arc::new(move |config, account, cancel_flag| {
                         let feature_log = feature_log(&checkin_log, "自动签到", &account.email);
                         checkin::run_account_with_log(config, account, cancel_flag, &feature_log)
                     }),
                     run_minesweeper: Arc::new(move |config, account, cancel_flag| {
                         let feature_log = feature_log(&minesweeper_log, "自动扫雷", &account.email);
-                        minesweeper::run_account_for_free_play_with_log(
+                        minesweeper::run_account_for_limited_free_play_with_log(
                             config,
                             account,
                             cancel_flag,
@@ -671,7 +728,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                     run_sheepmatch: Arc::new(move |config, account, cancel_flag| {
                         let feature_log =
                             feature_log(&sheepmatch_log, "自动羊了个羊", &account.email);
-                        sheepmatch::run_account_for_free_play_with_log(
+                        sheepmatch::run_account_for_limited_free_play_with_log(
                             config,
                             account,
                             cancel_flag,
@@ -683,7 +740,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&puzzle_2048_log, "自动谜题2048", &account.email);
-                            puzzle_2048::run_account_for_free_play_with_log(
+                            puzzle_2048::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -696,7 +753,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&sokoban_log, "自动推箱子", &account.email);
-                            sokoban::run_account_for_free_play_with_log(
+                            sokoban::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -709,7 +766,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&lightsout_log, "自动点灯", &account.email);
-                            lightsout::run_account_for_free_play_with_log(
+                            lightsout::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -721,7 +778,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         let maze_log = log.clone();
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log = feature_log(&maze_log, "自动迷宫", &account.email);
-                            maze::run_account_for_free_play_with_log(
+                            maze::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -734,7 +791,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&nonogram_log, "自动数织", &account.email);
-                            nonogram::run_account_for_free_play_with_log(
+                            nonogram::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -747,7 +804,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&flowfree_log, "自动连线", &account.email);
-                            flowfree::run_account_for_free_play_with_log(
+                            flowfree::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -760,7 +817,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&memory_log, "自动记忆翻牌", &account.email);
-                            memory::run_account_for_free_play_with_log(
+                            memory::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -773,7 +830,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log =
                                 feature_log(&puzzle_15_log, "自动华容道", &account.email);
-                            puzzle_15::run_account_for_free_play_with_log(
+                            puzzle_15::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -785,7 +842,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
                         let sudoku_log = log.clone();
                         Arc::new(move |config, account, cancel_flag| {
                             let feature_log = feature_log(&sudoku_log, "自动数独", &account.email);
-                            sudoku::run_account_for_free_play_with_log(
+                            sudoku::run_account_for_limited_free_play_with_log(
                                 config,
                                 account,
                                 cancel_flag,
@@ -805,7 +862,7 @@ fn run_all_free_features(config: &mut AuthConfig, auth_path: &Path) {
             print_account_summary(config, &auth_path);
         }
         Ok(None) => {}
-        Err(error) => println!("全自动运行所有有次数限制白嫖玩法运行失败：{}", error),
+        Err(error) => println!("全自动运行所有有次数限制的白嫖玩法运行失败：{}", error),
     }
 }
 

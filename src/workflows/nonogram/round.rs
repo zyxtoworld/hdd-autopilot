@@ -19,18 +19,28 @@ pub(super) fn is_pending_session(session: &NonogramSession) -> bool {
     is_pending_round_status(&session.status)
 }
 
+pub(super) struct PlayRoundRequest<'a> {
+    pub(super) config: &'a NonogramConfigResponse,
+    pub(super) session: NonogramSession,
+    pub(super) continued: bool,
+    pub(super) progress: RoundProgress,
+    pub(super) server_now_ms: i64,
+}
+
 pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
-    config: &NonogramConfigResponse,
-    start: NonogramSession,
-    continued: bool,
-    progress: RoundProgress,
-    server_now_ms: i64,
+    request: PlayRoundRequest<'_>,
 ) -> io::Result<NonogramRoundSummary> {
+    let PlayRoundRequest {
+        config,
+        session,
+        continued,
+        progress,
+        server_now_ms,
+    } = request;
     let started = Instant::now();
-    let session = start;
     let steps = match nonogram::solve(&session) {
         Ok(steps) => steps,
         Err(error) => {
@@ -64,34 +74,50 @@ pub(super) fn play_round(
         ));
     }
 
-    play_round_with_finish(
+    finish_solved_round(
         cancel_flag,
         state,
         runtime,
-        config,
-        session,
-        continued,
-        &progress,
-        started,
-        planned_steps,
-        steps,
-        server_now_ms,
+        FinishSolvedRoundRequest {
+            config,
+            session,
+            continued,
+            progress: &progress,
+            started,
+            planned_steps,
+            steps,
+            server_now_ms,
+        },
     )
 }
 
-fn play_round_with_finish(
-    cancel_flag: &ui::CancelFlag,
-    state: &Arc<Mutex<BatchState>>,
-    runtime: &mut AccountRuntime,
-    config: &NonogramConfigResponse,
-    mut session: NonogramSession,
+struct FinishSolvedRoundRequest<'a> {
+    config: &'a NonogramConfigResponse,
+    session: NonogramSession,
     continued: bool,
-    progress: &RoundProgress,
+    progress: &'a RoundProgress,
     started: Instant,
     planned_steps: i32,
     steps: Vec<nonogram::NonogramStep>,
     server_now_ms: i64,
+}
+
+fn finish_solved_round(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    request: FinishSolvedRoundRequest<'_>,
 ) -> io::Result<NonogramRoundSummary> {
+    let FinishSolvedRoundRequest {
+        config,
+        mut session,
+        continued,
+        progress,
+        started,
+        planned_steps,
+        steps,
+        server_now_ms,
+    } = request;
     sleep_before_finish(
         cancel_flag,
         ServerClockSnapshot::new(server_now_ms),

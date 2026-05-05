@@ -127,15 +127,7 @@ pub fn run_batch(
     Ok(state.lock().unwrap().config.clone())
 }
 
-pub fn run_account_for_free_play(
-    config: &AuthConfig,
-    account: AuthCache,
-    cancel_flag: &ui::CancelFlag,
-) -> io::Result<AccountRunOutput> {
-    run_account_for_free_play_with_log(config, account, cancel_flag, &ui::TaskLog::stdout())
-}
-
-pub fn run_account_for_free_play_with_log(
+pub fn run_account_for_limited_free_play_with_log(
     config: &AuthConfig,
     account: AuthCache,
     cancel_flag: &ui::CancelFlag,
