@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::model::{
     ArrowOutClick, ArrowOutConfigResponse, ArrowOutFinishResponse, ArrowOutHistoryResponse,
@@ -11,8 +11,8 @@ use crate::runtime::resolve_data_file_path;
 use crate::solver::arrow_out;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRewardSummary, AccountRuntime, BatchState, append_account_log_line, current_unix_ms,
-    ensure_authenticated, format_amount, print_account_reward_summary,
+    AccountRewardSummary, AccountRuntime, BatchState, ServerClockSnapshot, append_account_log_line,
+    current_unix_ms, ensure_authenticated, format_amount, print_account_reward_summary,
     with_auth_retry_api_until_success,
 };
 
@@ -37,8 +37,7 @@ struct LiveRewardTracker {
 
 struct ActiveArrowOutSession {
     session: ArrowOutSession,
-    server_now_ms: i64,
-    observed_at: Instant,
+    clock: ServerClockSnapshot,
 }
 
 impl LiveRewardTracker {
@@ -449,25 +448,14 @@ fn sleep_before_finish(
 fn active_session(session: ArrowOutSession, server_now_ms: i64) -> ActiveArrowOutSession {
     ActiveArrowOutSession {
         session,
-        server_now_ms: if server_now_ms > 0 {
-            server_now_ms
-        } else {
-            current_unix_ms()
-        },
-        observed_at: Instant::now(),
+        clock: ServerClockSnapshot::new(server_now_ms),
     }
 }
 
 fn estimated_server_elapsed_ms(active_session: &ActiveArrowOutSession) -> i64 {
-    let local_elapsed = active_session
-        .observed_at
-        .elapsed()
-        .as_millis()
-        .min(i64::MAX as u128) as i64;
     active_session
-        .server_now_ms
-        .saturating_add(local_elapsed)
-        .saturating_sub(active_session.session.started_at_ms.max(0))
+        .clock
+        .elapsed_since_ms(active_session.session.started_at_ms)
 }
 
 fn is_pending_session(session: &ArrowOutSession) -> bool {
@@ -601,8 +589,7 @@ mod tests {
                 started_at_ms: 10_000,
                 ..ArrowOutSession::default()
             },
-            server_now_ms: 10_900,
-            observed_at: Instant::now(),
+            clock: ServerClockSnapshot::new(10_900),
         };
 
         let elapsed = estimated_server_elapsed_ms(&active_session);

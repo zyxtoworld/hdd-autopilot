@@ -9,7 +9,7 @@ use crate::model::{
 use crate::solver::flowfree;
 use crate::ui;
 use crate::workflows::common::{
-    AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
+    AccountRuntime, BatchState, ServerClockSnapshot, current_unix_ms, is_pending_round_status,
     with_auth_retry_api_until_success,
 };
 
@@ -30,6 +30,7 @@ pub(super) fn play_round(
     start: FlowfreeSession,
     continued: bool,
     progress: RoundProgress,
+    server_now_ms: i64,
 ) -> io::Result<FlowfreeRoundSummary> {
     let started = Instant::now();
     let mut session = start;
@@ -99,6 +100,7 @@ pub(super) fn play_round(
 
     sleep_before_finish(
         cancel_flag,
+        ServerClockSnapshot::new(server_now_ms),
         session.started_at_ms,
         planned_steps,
         config.min_interval_ms,
@@ -191,18 +193,12 @@ fn finish_once(
 
 fn sleep_before_finish(
     cancel_flag: &ui::CancelFlag,
+    server_clock: ServerClockSnapshot,
     started_at_ms: i64,
     planned_steps: i32,
     min_interval_ms: i32,
 ) -> io::Result<()> {
-    let min_move_delay = if min_interval_ms > 0 && planned_steps > 0 {
-        min_interval_ms as i64 * planned_steps as i64
-    } else {
-        0
-    };
-    let elapsed = current_unix_ms().saturating_sub(started_at_ms.max(0));
-    let required = min_move_delay.max(3_100);
-    let wait_ms = required.saturating_sub(elapsed);
+    let wait_ms = finish_wait_ms(server_clock, started_at_ms, planned_steps, min_interval_ms);
     if wait_ms > 0 {
         ui::sleep_with_cancel(
             cancel_flag,
@@ -210,6 +206,22 @@ fn sleep_before_finish(
         )?;
     }
     Ok(())
+}
+
+fn finish_wait_ms(
+    server_clock: ServerClockSnapshot,
+    started_at_ms: i64,
+    planned_steps: i32,
+    min_interval_ms: i32,
+) -> i64 {
+    let min_move_delay = if min_interval_ms > 0 && planned_steps > 0 {
+        min_interval_ms as i64 * planned_steps as i64
+    } else {
+        0
+    };
+    let elapsed = server_clock.elapsed_since_ms(started_at_ms);
+    let required = min_move_delay.max(3_100);
+    required.saturating_sub(elapsed)
 }
 
 fn merge_session(previous: &FlowfreeSession, response: FlowfreeFinishResponse) -> FlowfreeSession {
@@ -342,4 +354,16 @@ pub(super) fn is_active_session_error(message: &str) -> bool {
         || lower.contains("进行中")
         || lower.contains("active session")
         || lower.contains("max active")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_wait_uses_server_clock_snapshot() {
+        let wait_ms = finish_wait_ms(ServerClockSnapshot::new(10_900), 10_000, 10, 75);
+
+        assert!((2_000..=2_200).contains(&wait_ms));
+    }
 }

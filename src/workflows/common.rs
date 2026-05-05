@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{FixedOffset, TimeZone, Utc};
 
@@ -67,6 +67,34 @@ pub(crate) struct AccountRewardSummary {
     pub(crate) index: usize,
     pub(crate) email: String,
     pub(crate) total_reward: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ServerClockSnapshot {
+    server_now_ms: i64,
+    observed_at: Instant,
+}
+
+impl ServerClockSnapshot {
+    pub(crate) fn new(server_now_ms: i64) -> Self {
+        Self {
+            server_now_ms: if server_now_ms > 0 {
+                server_now_ms
+            } else {
+                current_unix_ms()
+            },
+            observed_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn elapsed_since_ms(self, started_at_ms: i64) -> i64 {
+        self.estimated_now_ms().saturating_sub(started_at_ms.max(0))
+    }
+
+    fn estimated_now_ms(self) -> i64 {
+        let local_elapsed = self.observed_at.elapsed().as_millis().min(i64::MAX as u128) as i64;
+        self.server_now_ms.saturating_add(local_elapsed)
+    }
 }
 
 pub(crate) fn print_account_reward_summary(
@@ -797,5 +825,13 @@ mod tests {
     fn duration_display_uses_seconds_with_three_decimals() {
         assert_eq!(format_duration_ms(1234), "1.234秒");
         assert_eq!(format_duration_ms(0), "0.000秒");
+    }
+
+    #[test]
+    fn server_clock_snapshot_estimates_elapsed_from_server_time() {
+        let clock = ServerClockSnapshot::new(10_900);
+        let elapsed = clock.elapsed_since_ms(10_000);
+
+        assert!((900..5_000).contains(&elapsed));
     }
 }

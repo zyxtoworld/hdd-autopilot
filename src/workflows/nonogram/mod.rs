@@ -301,6 +301,7 @@ fn drain_pending_session(
             item.clone(),
             true,
             progress,
+            me.server_now_ms,
         )?;
         result.remaining_after = remaining;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;
@@ -410,6 +411,7 @@ fn run_difficulty(
                         item.clone(),
                         true,
                         pending_progress,
+                        refreshed.server_now_ms,
                     )?;
                     result.remaining_after = pending_remaining;
                     if item.difficulty == difficulty {
@@ -435,6 +437,7 @@ fn run_difficulty(
             .get(difficulty)
             .copied()
             .unwrap_or_else(|| current_remaining.saturating_sub(1));
+        let server_now_ms = start.server_now_ms;
         let mut result = play_round(
             cancel_flag,
             state,
@@ -443,6 +446,7 @@ fn run_difficulty(
             start.session,
             false,
             progress,
+            server_now_ms,
         )?;
         result.remaining_after = current_remaining;
         append_round_result(&state.lock().unwrap().result_log_dir, &result)?;

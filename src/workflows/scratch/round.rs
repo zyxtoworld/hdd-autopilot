@@ -9,7 +9,6 @@ use crate::model::{
     ScratchPlayResponse, ScratchRoundResult, scratch_reveal_ready_at,
 };
 use crate::ui;
-use crate::workflows::common::current_unix_ms;
 use rand::prelude::IndexedRandom;
 
 use super::auth::with_auth_retry;
@@ -316,9 +315,7 @@ fn wait_until_reveal_ready(
     play_resp: &ScratchPlayResponse,
 ) -> io::Result<()> {
     ui::check_cancel(cancel_flag)?;
-    let target_ms = scratch_reveal_ready_at(play_resp);
-    let now_ms = current_unix_ms();
-    let until_server = Duration::from_millis(target_ms.saturating_sub(now_ms).max(0) as u64);
+    let until_server = scratch_reveal_wait(play_resp);
     let until_local = runtime
         .next_reveal_allowed_at
         .checked_duration_since(Instant::now())
@@ -327,6 +324,20 @@ fn wait_until_reveal_ready(
     ui::sleep_with_cancel(cancel_flag, wait)?;
     runtime.next_reveal_allowed_at = Instant::now();
     Ok(())
+}
+
+fn scratch_reveal_wait(play_resp: &ScratchPlayResponse) -> Duration {
+    let target_ms = scratch_reveal_ready_at(play_resp);
+    let issued_at_ms = play_resp.issued_at_ms.max(0);
+    let server_wait_ms = if issued_at_ms > 0 && target_ms > issued_at_ms {
+        target_ms - issued_at_ms
+    } else if target_ms > 0 && target_ms <= 60_000 {
+        target_ms
+    } else {
+        0
+    };
+    let min_wait_ms = i64::from(play_resp.min_scratch_ms.max(0));
+    Duration::from_millis(server_wait_ms.max(min_wait_ms).max(0) as u64)
 }
 
 fn random_scratch_game_type() -> String {
@@ -370,5 +381,34 @@ fn add_round_totals(result: &ScratchRoundResult, total_cost: &mut f64, total_rew
         *total_reward += reveal_history_item.reward_amount.unwrap_or(0.0);
     } else if let Some(reveal_resp) = &result.reveal_resp {
         *total_reward += reveal_resp.reward_amount;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reveal_wait_uses_issued_server_time_not_local_clock() {
+        let play = ScratchPlayResponse {
+            earliest_reveal_at_ms: 11_500,
+            issued_at_ms: 10_000,
+            min_scratch_ms: 500,
+            ..ScratchPlayResponse::default()
+        };
+
+        assert_eq!(scratch_reveal_wait(&play), Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn reveal_wait_falls_back_to_min_scratch_duration() {
+        let play = ScratchPlayResponse {
+            earliest_reveal_at_ms: 0,
+            issued_at_ms: 0,
+            min_scratch_ms: 800,
+            ..ScratchPlayResponse::default()
+        };
+
+        assert_eq!(scratch_reveal_wait(&play), Duration::from_millis(800));
     }
 }
