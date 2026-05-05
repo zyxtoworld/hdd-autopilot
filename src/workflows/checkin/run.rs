@@ -1,38 +1,65 @@
+use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::api::ApiError;
 use crate::model::{CheckinClaimResponse, CheckinMeResponse, CheckinResult, CheckinTodayResponse};
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
-use crate::workflows::common::current_unix_ms;
+use crate::workflows::common::{
+    API_RETRY_MAX_ATTEMPTS, current_unix_ms, humanize_retryable_api_error, is_retryable_api_error,
+};
 
 use super::auth::{ensure_authenticated, reauthenticate};
 use super::log::append_checkin_log;
 use super::{AccountRuntime, BatchState};
 
+const CHECKIN_RETRY_LOG_EVERY: usize = 10;
+#[cfg(not(test))]
+const CHECKIN_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+#[cfg(test)]
+const CHECKIN_RETRY_BACKOFF: Duration = Duration::ZERO;
+
 pub(super) fn run_one_account(
     cancel_flag: &ui::CancelFlag,
     state: Arc<Mutex<BatchState>>,
-    mut runtime: AccountRuntime,
+    runtime: AccountRuntime,
 ) -> Option<CheckinResult> {
-    if ui::check_cancel(cancel_flag).is_err() {
-        return None;
+    let email = runtime.email().to_string();
+    match run_one_account_inner(cancel_flag, Arc::clone(&state), runtime) {
+        Ok(result) => result,
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => None,
+        Err(error) => Some(record_checkin_result(
+            &state,
+            failure_checkin_result(&email, error.to_string()),
+        )),
     }
-    if let Err(error) = ensure_authenticated(&state, &mut runtime) {
-        return Some(CheckinResult {
-            email: runtime.email().to_string(),
-            status: "签到失败".to_string(),
-            error_message: error.to_string(),
-            when_unix_ms: current_unix_ms(),
-            ..CheckinResult::default()
-        });
+}
+
+pub(super) fn run_one_account_inner(
+    cancel_flag: &ui::CancelFlag,
+    state: Arc<Mutex<BatchState>>,
+    mut runtime: AccountRuntime,
+) -> io::Result<Option<CheckinResult>> {
+    ui::check_cancel(cancel_flag)?;
+    let email = runtime.email().to_string();
+    if let Err(error) =
+        retry_checkin_api_until_success(cancel_flag, &state, &email, "签到登录状态", || {
+            ensure_authenticated(&state, &mut runtime)
+        })?
+    {
+        return Ok(Some(record_checkin_result(
+            &state,
+            failure_checkin_result(&email, error.to_string()),
+        )));
     }
 
-    if ui::check_cancel(cancel_flag).is_err() {
-        return None;
-    }
-    let email = runtime.email().to_string();
-    let result = run_checkin_with_retry(&state, &mut runtime, &email);
+    ui::check_cancel(cancel_flag)?;
+    let result = run_checkin_with_retry(cancel_flag, &state, &mut runtime, &email)?;
+    Ok(Some(record_checkin_result(&state, result)))
+}
+
+fn record_checkin_result(state: &Arc<Mutex<BatchState>>, result: CheckinResult) -> CheckinResult {
     let log_dir = resolve_data_file_path("log/checkin");
     let _ = append_checkin_log(&log_dir, &result);
     state
@@ -42,48 +69,132 @@ pub(super) fn run_one_account(
         .line(crate::workflows::checkin::format_checkin_result_line(
             &result,
         ));
-    Some(result)
+    result
 }
 
 pub(super) fn run_checkin_with_retry(
+    cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     email: &str,
-) -> CheckinResult {
+) -> io::Result<CheckinResult> {
+    match retry_checkin_api_until_success(cancel_flag, state, email, "签到接口", || {
+        run_checkin_once_with_auth_retry(state, runtime, email)
+    })? {
+        Ok(result) => Ok(result),
+        Err(error) => Ok(failure_checkin_result(email, error.to_string())),
+    }
+}
+
+fn run_checkin_once_with_auth_retry(
+    state: &Arc<Mutex<BatchState>>,
+    runtime: &mut AccountRuntime,
+    email: &str,
+) -> Result<CheckinResult, ApiError> {
     match run_checkin(runtime, email) {
-        Ok(result) => result,
+        Ok(result) => Ok(result),
         Err(error) if crate::api::is_unauthorized(&error) => {
             state.lock().unwrap().log.line_fmt(format_args!(
                 "账号 {} 的登录状态中途失效了，正在重新登录后继续。",
                 runtime.email()
             ));
-            if let Err(relogin_error) = reauthenticate(state, runtime) {
-                return CheckinResult {
-                    email: email.to_string(),
-                    status: "签到失败".to_string(),
-                    error_message: relogin_error.to_string(),
-                    when_unix_ms: current_unix_ms(),
-                    ..CheckinResult::default()
-                };
-            }
-            match run_checkin(runtime, email) {
-                Ok(result) => result,
-                Err(error) => CheckinResult {
-                    email: email.to_string(),
-                    status: "签到失败".to_string(),
-                    error_message: error.to_string(),
-                    when_unix_ms: current_unix_ms(),
-                    ..CheckinResult::default()
-                },
-            }
+            reauthenticate(state, runtime)?;
+            run_checkin(runtime, email)
         }
-        Err(error) => CheckinResult {
-            email: email.to_string(),
-            status: "签到失败".to_string(),
-            error_message: error.to_string(),
-            when_unix_ms: current_unix_ms(),
-            ..CheckinResult::default()
-        },
+        Err(error) => Err(error),
+    }
+}
+
+fn retry_checkin_api_until_success<T, F>(
+    cancel_flag: &ui::CancelFlag,
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    operation: &str,
+    mut action: F,
+) -> io::Result<Result<T, ApiError>>
+where
+    F: FnMut() -> Result<T, ApiError>,
+{
+    let mut attempts = 0usize;
+    loop {
+        ui::check_cancel(cancel_flag)?;
+        attempts += 1;
+        match action() {
+            Ok(value) => return Ok(Ok(value)),
+            Err(error) if is_retryable_api_error(&error) => {
+                log_retryable_checkin_api_error(state, email, operation, attempts, &error);
+                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                    log_retry_exhausted_checkin_api_error(
+                        state, email, operation, attempts, &error,
+                    );
+                    return Err(retry_exhausted_checkin_api_error(
+                        operation, attempts, &error,
+                    ));
+                }
+                ui::sleep_with_cancel(cancel_flag, CHECKIN_RETRY_BACKOFF)?;
+            }
+            Err(error) => return Ok(Err(error)),
+        }
+    }
+}
+
+fn log_retryable_checkin_api_error(
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    operation: &str,
+    attempts: usize,
+    error: &ApiError,
+) {
+    if attempts == 1 || attempts % CHECKIN_RETRY_LOG_EVERY == 0 {
+        state.lock().unwrap().log.line_fmt(format_args!(
+            "账号 {} 的{}暂时连不上，会继续等接口恢复后再试（第 {} 次尝试）：{}",
+            email,
+            operation,
+            attempts,
+            humanize_retryable_api_error(error)
+        ));
+    }
+}
+
+fn log_retry_exhausted_checkin_api_error(
+    state: &Arc<Mutex<BatchState>>,
+    email: &str,
+    operation: &str,
+    attempts: usize,
+    error: &ApiError,
+) {
+    state.lock().unwrap().log.line_fmt(format_args!(
+        "账号 {} 的{}连续重试 {} 次仍失败，准备重新进入签到流程：{}",
+        email,
+        operation,
+        attempts,
+        humanize_retryable_api_error(error)
+    ));
+}
+
+fn retry_exhausted_checkin_api_error(
+    operation: &str,
+    attempts: usize,
+    error: &ApiError,
+) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "{}连续重试 {} 次仍失败，准备重新进入签到流程：{}",
+            operation,
+            attempts,
+            humanize_retryable_api_error(error)
+        ),
+    )
+}
+
+fn failure_checkin_result(email: &str, error_message: impl Into<String>) -> CheckinResult {
+    CheckinResult {
+        email: email.to_string(),
+        status: "签到失败".to_string(),
+        error_message: error_message.into(),
+        when_unix_ms: current_unix_ms(),
+        ..CheckinResult::default()
     }
 }
 
@@ -157,7 +268,6 @@ pub(super) fn humanize_account_status(status: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::ApiError;
     use crate::model::{AuthCache, AuthConfig};
 
     #[test]
@@ -231,12 +341,13 @@ mod tests {
     }
 
     #[test]
-    fn run_checkin_with_retry_surfaces_non_unauthorized_error() {
+    fn run_checkin_with_retry_retries_retryable_error_then_times_out() {
         let state = Arc::new(Mutex::new(BatchState {
             config: AuthConfig::default(),
             auth_cache_file: Some(std::env::temp_dir().join("checkin-test-auth.json")),
             log: crate::ui::TaskLog::stdout(),
         }));
+        let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut runtime = AccountRuntime {
             api_client: crate::api::ApiClient::new("http://127.0.0.1:9"),
             account: AuthCache {
@@ -246,14 +357,11 @@ mod tests {
             auth_token: "token".to_string(),
         };
 
-        let result = run_checkin_with_retry(&state, &mut runtime, "demo@example.com");
+        let error = run_checkin_with_retry(&cancel_flag, &state, &mut runtime, "demo@example.com")
+            .unwrap_err();
 
-        assert_eq!(result.status, "签到失败");
-        assert!(!result.error_message.trim().is_empty());
-        assert!(!matches!(
-            ApiError::Message(result.error_message.clone()),
-            ApiError::Unauthorized(_)
-        ));
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("签到接口连续重试"));
     }
 
     #[test]

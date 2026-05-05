@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::model::{
     SCRATCH_GAME_TYPE_ICON_MATCH, SCRATCH_GAME_TYPE_LUCKY_NUMBERS, SCRATCH_GAME_TYPE_PROGRESS_RUN,
     SCRATCH_GAME_TYPE_THREE_KIND, SCRATCH_GAME_TYPE_TREASURE_CHEST, ScratchHistoryItem,
-    ScratchPlayResponse, ScratchRoundResult, scratch_reveal_ready_at,
+    ScratchPlayResponse, ScratchRoundResult,
 };
 use crate::ui;
 use rand::prelude::IndexedRandom;
@@ -236,7 +236,7 @@ fn run_round(
         return Ok(result);
     }
 
-    wait_until_reveal_ready(cancel_flag, runtime, &play_resp)?;
+    wait_until_reveal_ready(cancel_flag, &play_resp)?;
     let reveal_resp = match with_auth_retry(cancel_flag, state, runtime, |client, auth_token| {
         client.reveal_scratch(auth_token, play_resp.play_id, &play_resp.reveal_token)
     }) {
@@ -311,28 +311,18 @@ fn fetch_scratch_history_item_with_retry(
 
 fn wait_until_reveal_ready(
     cancel_flag: &ui::CancelFlag,
-    runtime: &mut AccountRuntime,
     play_resp: &ScratchPlayResponse,
 ) -> io::Result<()> {
     ui::check_cancel(cancel_flag)?;
-    let until_server = scratch_reveal_wait(play_resp);
-    let until_local = runtime
-        .next_reveal_allowed_at
-        .checked_duration_since(Instant::now())
-        .unwrap_or(Duration::ZERO);
-    let wait = until_server.max(until_local);
-    ui::sleep_with_cancel(cancel_flag, wait)?;
-    runtime.next_reveal_allowed_at = Instant::now();
+    ui::sleep_with_cancel(cancel_flag, scratch_reveal_wait(play_resp))?;
     Ok(())
 }
 
 fn scratch_reveal_wait(play_resp: &ScratchPlayResponse) -> Duration {
-    let target_ms = scratch_reveal_ready_at(play_resp);
     let issued_at_ms = play_resp.issued_at_ms.max(0);
-    let server_wait_ms = if issued_at_ms > 0 && target_ms > issued_at_ms {
-        target_ms - issued_at_ms
-    } else if target_ms > 0 && target_ms <= 60_000 {
-        target_ms
+    let earliest_reveal_at_ms = play_resp.earliest_reveal_at_ms.max(0);
+    let server_wait_ms = if issued_at_ms > 0 && earliest_reveal_at_ms > issued_at_ms {
+        earliest_reveal_at_ms - issued_at_ms
     } else {
         0
     };
@@ -410,5 +400,17 @@ mod tests {
         };
 
         assert_eq!(scratch_reveal_wait(&play), Duration::from_millis(800));
+    }
+
+    #[test]
+    fn reveal_wait_ignores_absolute_reveal_time_without_issued_time() {
+        let play = ScratchPlayResponse {
+            earliest_reveal_at_ms: 1_777_000_000_000,
+            issued_at_ms: 0,
+            min_scratch_ms: 900,
+            ..ScratchPlayResponse::default()
+        };
+
+        assert_eq!(scratch_reveal_wait(&play), Duration::from_millis(900));
     }
 }

@@ -8,7 +8,7 @@ use crate::solver::memory::MemorySolver;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
 };
 
 use super::types::{MemoryDifficultySummary, MemoryRoundSummary, MemorySnapshot, RoundProgress};
@@ -51,6 +51,7 @@ pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    config: &MemoryConfigResponse,
     start: MemorySnapshot,
     continued: bool,
     progress: RoundProgress,
@@ -99,6 +100,7 @@ pub(super) fn play_round(
             ));
         };
 
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         match flip_once(
             cancel_flag,
             state,

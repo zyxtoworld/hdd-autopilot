@@ -162,17 +162,6 @@ pub struct ScratchRoundResult {
     pub reveal_history_error_message: String,
 }
 
-pub fn scratch_reveal_ready_at(play_resp: &ScratchPlayResponse) -> i64 {
-    if play_resp.earliest_reveal_at_ms > 0 {
-        return play_resp.earliest_reveal_at_ms;
-    }
-    let fallback_ms = play_resp.issued_at_ms + i64::from(play_resp.min_scratch_ms.max(0));
-    if fallback_ms > 0 {
-        return fallback_ms;
-    }
-    i64::from(play_resp.min_scratch_ms.max(0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

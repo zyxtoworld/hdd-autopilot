@@ -5,7 +5,7 @@ mod round;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::api::ApiClient;
 use crate::model::{AuthCache, AuthConfig};
@@ -56,7 +56,6 @@ pub struct AccountRuntime {
     pub total_cost: f64,
     pub total_reward: f64,
     pub rounds_played: i32,
-    pub next_reveal_allowed_at: Instant,
 }
 
 impl AccountRuntime {
@@ -137,7 +136,6 @@ pub fn new_account_runtimes(config: &AuthConfig) -> Vec<AccountRuntime> {
             total_cost: 0.0,
             total_reward: 0.0,
             rounds_played: 0,
-            next_reveal_allowed_at: Instant::now(),
         })
         .collect()
 }

@@ -10,7 +10,7 @@ use crate::model::{
 use crate::ui;
 use crate::workflows::common::{
     API_RETRY_MAX_ATTEMPTS, current_unix_ms, humanize_retryable_api_error, is_pending_round_status,
-    is_retryable_api_error,
+    is_retryable_api_error, sleep_min_interval,
 };
 
 use super::auth::{with_auth_retry_api, with_auth_retry_until_success};
@@ -108,12 +108,7 @@ pub(super) fn play_round(
                 error_message: String::new(),
             });
         }
-        if config.min_interval_ms > 0 {
-            ui::sleep_with_cancel(
-                cancel_flag,
-                std::time::Duration::from_millis(config.min_interval_ms as u64),
-            )?;
-        }
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         let mut step_attempts = 0usize;
         let response = loop {
             ui::check_cancel(cancel_flag)?;

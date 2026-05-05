@@ -8,7 +8,7 @@ use crate::solver::sudoku;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
 };
 
 use super::types::{RoundProgress, SudokuDifficultySummary, SudokuRoundSummary, SudokuSnapshot};
@@ -52,6 +52,7 @@ pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    config: &SudokuConfigResponse,
     start: SudokuSnapshot,
     continued: bool,
     progress: RoundProgress,
@@ -102,7 +103,7 @@ pub(super) fn play_round(
     let mut latest_conflict_count = 0;
 
     for fill in fills {
-        ui::check_cancel(cancel_flag)?;
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         let step = fill_once(
             cancel_flag,
             state,
@@ -150,6 +151,7 @@ pub(super) fn play_round(
             state,
             runtime,
             &mut snapshot,
+            config.min_interval_ms,
             &initial_wrong_fills,
             &mut filled_cells,
         ) {
@@ -418,11 +420,13 @@ fn clear_and_refill_wrong_cells(
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
     snapshot: &mut SudokuSnapshot,
+    min_interval_ms: i32,
     wrong_fills: &[sudoku::CellFill],
     filled_cells: &mut i32,
 ) -> io::Result<usize> {
     let mut latest_conflict_count = 0;
     for fill in wrong_fills {
+        sleep_min_interval(cancel_flag, min_interval_ms)?;
         let step = fill_once(
             cancel_flag,
             state,
@@ -453,6 +457,7 @@ fn clear_and_refill_wrong_cells(
     )
     .map_err(|error| io::Error::other(format!("重新求解失败：{}", error)))?;
     for fill in fills {
+        sleep_min_interval(cancel_flag, min_interval_ms)?;
         let step = fill_once(
             cancel_flag,
             state,

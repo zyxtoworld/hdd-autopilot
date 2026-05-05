@@ -10,7 +10,7 @@ use crate::solver::puzzle_15;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
 };
 
 use super::types::{
@@ -52,6 +52,7 @@ pub(super) fn play_round(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    config: &Puzzle15ConfigResponse,
     start: Puzzle15Snapshot,
     continued: bool,
     progress: RoundProgress,
@@ -75,7 +76,7 @@ pub(super) fn play_round(
     let planned_steps = path.len().min(i32::MAX as usize) as i32;
 
     for direction in path {
-        ui::check_cancel(cancel_flag)?;
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         let step = move_once(
             cancel_flag,
             state,

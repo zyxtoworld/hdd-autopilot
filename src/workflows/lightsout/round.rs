@@ -7,7 +7,7 @@ use crate::solver::lightsout;
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
 };
 
 use super::types::{LightsoutDifficultySummary, LightsoutRoundSummary, RoundProgress};
@@ -65,13 +65,7 @@ pub(super) fn play_round(
 
     let mut actual_steps = 0i32;
     for (r, c) in steps {
-        ui::check_cancel(cancel_flag)?;
-        if config.min_interval_ms > 0 {
-            ui::sleep_with_cancel(
-                cancel_flag,
-                std::time::Duration::from_millis(config.min_interval_ms as u64),
-            )?;
-        }
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         let response = step_once(
             cancel_flag,
             state,

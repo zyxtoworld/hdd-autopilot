@@ -14,7 +14,9 @@ use crate::workflows::common::{AccountRewardSummary, format_amount, print_accoun
 
 use self::auth::{ensure_authenticated, load_auth_me_with_retry};
 pub use self::log::{append_checkin_log, format_checkin_result_line};
-use self::run::{humanize_account_status, humanize_balance_error, run_one_account};
+use self::run::{
+    humanize_account_status, humanize_balance_error, run_one_account, run_one_account_inner,
+};
 
 #[derive(Debug)]
 pub struct BatchState {
@@ -134,7 +136,7 @@ pub fn run_account_with_log(
         account,
         auth_token: String::new(),
     };
-    let result = run_one_account(cancel_flag, Arc::clone(&state), runtime);
+    let result = run_one_account_inner(cancel_flag, Arc::clone(&state), runtime)?;
     let updated_account = state
         .lock()
         .unwrap()

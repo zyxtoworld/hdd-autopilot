@@ -11,7 +11,7 @@ use crate::solver::puzzle_2048::{self, DEFAULT_DIRECTIONS, Direction};
 use crate::ui;
 use crate::workflows::common::{
     AccountRuntime, BatchState, current_unix_ms, is_pending_round_status,
-    retry_operation_with_step, with_auth_retry_api_until_success,
+    retry_operation_with_step, sleep_min_interval, with_auth_retry_api_until_success,
 };
 
 use super::types::{PuzzleDifficultySummary, PuzzleRoundSummary, PuzzleSnapshot, RoundProgress};
@@ -93,6 +93,7 @@ pub(super) fn play_round(
         )
         .unwrap_or_else(|| directions.first().copied().unwrap_or(Direction::Up));
         let valid_dirs = puzzle_2048::legal_moves(&snapshot.board, &directions);
+        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
         let response = move_once(
             cancel_flag,
             state,
@@ -140,6 +141,7 @@ pub(super) fn play_round(
                     ));
                     let alt = valid_dirs.into_iter().find(|item| *item != direction);
                     if let Some(alt) = alt {
+                        sleep_min_interval(cancel_flag, config.min_interval_ms)?;
                         match move_once(
                             cancel_flag,
                             state,

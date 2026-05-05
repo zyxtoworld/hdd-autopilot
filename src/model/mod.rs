@@ -87,7 +87,7 @@ pub use scratch::{
     SCRATCH_GAME_TYPE_THREE_KIND, SCRATCH_GAME_TYPE_TREASURE_CHEST, ScratchCell, ScratchCheckpoint,
     ScratchChest, ScratchHistoryItem, ScratchHistoryResponse, ScratchIconCell, ScratchNumber,
     ScratchPlayRequest, ScratchPlayResponse, ScratchRevealRequest, ScratchRevealResponse,
-    ScratchRoundResult, ScratchTicketPayload, scratch_reveal_ready_at,
+    ScratchRoundResult, ScratchTicketPayload,
 };
 pub use sheepmatch::{
     AbandonRequest, AbandonResponse, AccountRunSummary, ConfigResponse, DIFFICULTY_EASY,

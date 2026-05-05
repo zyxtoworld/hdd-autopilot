@@ -7,7 +7,9 @@ use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::model::{AuthCache, AuthConfig, Puzzle15MeResponse, Puzzle15StartResponse};
+use crate::model::{
+    AuthCache, AuthConfig, Puzzle15ConfigResponse, Puzzle15MeResponse, Puzzle15StartResponse,
+};
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
 use crate::workflows::common::{
@@ -198,7 +200,7 @@ fn run_account(
 
     let me = fetch_me(cancel_flag, state, runtime)?;
     let mut used_today = me.daily_plays_used.clone();
-    let drained = drain_pending_session(cancel_flag, state, runtime, &me)?;
+    let drained = drain_pending_session(cancel_flag, state, runtime, &config, &me)?;
     for result in &drained {
         merge_round_into_cache(progress_cache, runtime.email(), result);
     }
@@ -221,6 +223,7 @@ fn run_account(
             cancel_flag,
             state,
             runtime,
+            &config,
             DifficultyRunPlan {
                 difficulty: difficulty.clone(),
                 summary,
@@ -265,6 +268,7 @@ fn drain_pending_session(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    config: &Puzzle15ConfigResponse,
     me: &Puzzle15MeResponse,
 ) -> io::Result<Vec<Puzzle15RoundSummary>> {
     let mut rounds = Vec::new();
@@ -292,6 +296,7 @@ fn drain_pending_session(
             cancel_flag,
             state,
             runtime,
+            &config,
             snapshot_from_history_item(item),
             true,
             progress,
@@ -316,6 +321,7 @@ fn run_difficulty(
     cancel_flag: &ui::CancelFlag,
     state: &Arc<Mutex<BatchState>>,
     runtime: &mut AccountRuntime,
+    config: &Puzzle15ConfigResponse,
     plan: DifficultyRunPlan,
     used_today: &mut HashMap<String, i32>,
     progress_cache: &mut AccountProgressCache,
@@ -400,6 +406,7 @@ fn run_difficulty(
                             cancel_flag,
                             state,
                             runtime,
+                            &config,
                             snapshot_from_history_item(&item),
                             true,
                             pending_progress,
@@ -454,6 +461,7 @@ fn run_difficulty(
                         cancel_flag,
                         state,
                         runtime,
+                        &config,
                         snapshot_from_history_item(&item),
                         true,
                         pending_progress,
@@ -483,6 +491,7 @@ fn run_difficulty(
             cancel_flag,
             state,
             runtime,
+            &config,
             snapshot_from_start_response(&start),
             false,
             progress,

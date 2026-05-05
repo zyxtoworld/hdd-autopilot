@@ -97,6 +97,17 @@ impl ServerClockSnapshot {
     }
 }
 
+pub(crate) fn sleep_min_interval(
+    cancel_flag: &ui::CancelFlag,
+    min_interval_ms: i32,
+) -> io::Result<()> {
+    ui::check_cancel(cancel_flag)?;
+    if min_interval_ms <= 0 {
+        return Ok(());
+    }
+    ui::sleep_with_cancel(cancel_flag, Duration::from_millis(min_interval_ms as u64))
+}
+
 pub(crate) fn print_account_reward_summary(
     log: &ui::TaskLog,
     title: &str,
