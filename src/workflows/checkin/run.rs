@@ -7,7 +7,7 @@ use crate::model::{CheckinClaimResponse, CheckinMeResponse, CheckinResult, Check
 use crate::runtime::resolve_data_file_path;
 use crate::ui;
 use crate::workflows::common::{
-    API_RETRY_MAX_ATTEMPTS, current_unix_ms, humanize_retryable_api_error, is_retryable_api_error,
+    current_unix_ms, humanize_retryable_api_error, is_retryable_api_error,
 };
 
 use super::auth::{ensure_authenticated, reauthenticate};
@@ -15,6 +15,10 @@ use super::log::append_checkin_log;
 use super::{AccountRuntime, BatchState};
 
 const CHECKIN_RETRY_LOG_EVERY: usize = 10;
+#[cfg(not(test))]
+const CHECKIN_API_RETRY_MAX_ATTEMPTS: usize = 3;
+#[cfg(test)]
+const CHECKIN_API_RETRY_MAX_ATTEMPTS: usize = 2;
 #[cfg(not(test))]
 const CHECKIN_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 #[cfg(test)]
@@ -82,7 +86,10 @@ pub(super) fn run_checkin_with_retry(
         run_checkin_once_with_auth_retry(state, runtime, email)
     })? {
         Ok(result) => Ok(result),
-        Err(error) => Ok(failure_checkin_result(email, error.to_string())),
+        Err(error) => Ok(failure_checkin_result(
+            email,
+            checkin_api_error_message(&error),
+        )),
     }
 }
 
@@ -123,13 +130,11 @@ where
             Ok(value) => return Ok(Ok(value)),
             Err(error) if is_retryable_api_error(&error) => {
                 log_retryable_checkin_api_error(state, email, operation, attempts, &error);
-                if attempts >= API_RETRY_MAX_ATTEMPTS {
+                if attempts >= CHECKIN_API_RETRY_MAX_ATTEMPTS {
                     log_retry_exhausted_checkin_api_error(
                         state, email, operation, attempts, &error,
                     );
-                    return Err(retry_exhausted_checkin_api_error(
-                        operation, attempts, &error,
-                    ));
+                    return Ok(Err(error));
                 }
                 ui::sleep_with_cancel(cancel_flag, CHECKIN_RETRY_BACKOFF)?;
             }
@@ -164,28 +169,12 @@ fn log_retry_exhausted_checkin_api_error(
     error: &ApiError,
 ) {
     state.lock().unwrap().log.line_fmt(format_args!(
-        "账号 {} 的{}连续重试 {} 次仍失败，准备重新进入签到流程：{}",
+        "账号 {} 的{}连续重试 {} 次仍失败，本次签到记为失败并继续后续玩法：{}",
         email,
         operation,
         attempts,
         humanize_retryable_api_error(error)
     ));
-}
-
-fn retry_exhausted_checkin_api_error(
-    operation: &str,
-    attempts: usize,
-    error: &ApiError,
-) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::TimedOut,
-        format!(
-            "{}连续重试 {} 次仍失败，准备重新进入签到流程：{}",
-            operation,
-            attempts,
-            humanize_retryable_api_error(error)
-        ),
-    )
 }
 
 fn failure_checkin_result(email: &str, error_message: impl Into<String>) -> CheckinResult {
@@ -195,6 +184,14 @@ fn failure_checkin_result(email: &str, error_message: impl Into<String>) -> Chec
         error_message: error_message.into(),
         when_unix_ms: current_unix_ms(),
         ..CheckinResult::default()
+    }
+}
+
+fn checkin_api_error_message(error: &ApiError) -> String {
+    if is_retryable_api_error(error) {
+        humanize_retryable_api_error(error)
+    } else {
+        error.to_string()
     }
 }
 
@@ -341,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn run_checkin_with_retry_retries_retryable_error_then_times_out() {
+    fn run_checkin_with_retry_retries_retryable_error_then_records_failure() {
         let state = Arc::new(Mutex::new(BatchState {
             config: AuthConfig::default(),
             auth_cache_file: Some(std::env::temp_dir().join("checkin-test-auth.json")),
@@ -357,11 +354,12 @@ mod tests {
             auth_token: "token".to_string(),
         };
 
-        let error = run_checkin_with_retry(&cancel_flag, &state, &mut runtime, "demo@example.com")
-            .unwrap_err();
+        let result =
+            run_checkin_with_retry(&cancel_flag, &state, &mut runtime, "demo@example.com").unwrap();
 
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(error.to_string().contains("签到接口连续重试"));
+        assert_eq!(result.status, "签到失败");
+        assert!(!result.success);
+        assert!(result.error_message.contains("网络"));
     }
 
     #[test]
